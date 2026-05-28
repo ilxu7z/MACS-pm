@@ -66,16 +66,26 @@ print(' '.join(a['id'] for a in reg))
       cp "$REPO_DIR/agents/$agent/SOUL.md" "$ws/SOUL.md"
     fi
 
+    # 部署治理协议
+    if [ -f "$REPO_DIR/agents/GOVERNANCE.md" ]; then
+      cp "$REPO_DIR/agents/GOVERNANCE.md" "$ws/GOVERNANCE.md"
+    fi
+
     # 写入 AGENTS.md（工作协议）
     cat > "$ws/AGENTS.md" << 'AGENTS_EOF'
-# AGENTS.md · 工作协议
+# 工作协议 · 鲍澄军团
 
+## 治理铁律
+必须遵守 GOVERNANCE.md 全部条款。
+
+## 工作纪律
 1. 只在被 sessions_spawn 调用时工作，不主动发起通信
-2. 收到任务先回复"已接收，开始执行"
-3. 输出必须包含：任务ID、结果、文件路径（如适用）
-4. 不确定的事标注 [待确认]，不编造
-5. 涉及删除/外发动作必须标注并等待确认
+2. 收到任务先验证输入完整性，再回复"已接收"
+3. 输出必须结构化（参照 GOVERNANCE.md 2.1）
+4. 不确定的事标注 [待确认]，禁止猜测
+5. 禁止越权操作（范围锁定 GOVERNANCE.md 4.2）
 6. 子Agent产出必须验收，不合格打回
+7. 超时/失联按 GOVERNANCE.md 3.2 和 5.1 处理
 AGENTS_EOF
 
     log "Workspace: $ws"
