@@ -2,36 +2,24 @@
   "meta": {
     "title": "鲍澄项目管理看板",
     "ownerTitle": "老板",
-    "version": "v1"
+    "version": "v2"
   },
   "states": ["Pending", "Planning", "Review", "Approved", "Assigned", "Doing", "Checking", "Done", "Blocked", "Cancelled"],
   "stateFlow": "Pending → Planning → Review → Approved → Assigned → Doing → Checking → Done",
   "terminalStates": ["Done", "Cancelled"],
   "roles": {
     "main": "鲍澄",
-    "guihua": "规划官",
-    "shenyi": "审议官",
-    "paifa": "派发官",
-    "wenan": "文案部",
-    "daima": "代码部",
-    "sheji": "设计部",
-    "shencha": "审查官",
-    "huizong": "汇总官"
+    "guihua": "筹微",
+    "shenyi": "审微",
+    "paifa": "驿使",
+    "wenan": "墨卿",
+    "daima": "锋铸",
+    "sheji": "绘象",
+    "shencha": "镜衡",
+    "huizong": "归藏"
   },
   "taskFields": [
-    "id",
-    "title",
-    "official",
-    "org",
-    "state",
-    "now",
-    "eta",
-    "block",
-    "output",
-    "ac",
-    "flow_log",
-    "updatedAt",
-    "todos",
-    "progress_log"
+    "id", "title", "official", "org", "state", "now", "eta",
+    "block", "output", "ac", "flow_log", "updatedAt", "todos", "progress_log"
   ]
 }

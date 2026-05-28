@@ -18,14 +18,14 @@ OPENCLAW_CFG = OPENCLAW_HOME / 'openclaw.json'
 
 ID_LABEL = {
     'main':     {'label': '鲍澄',   'role': '项目负责人', 'duty': '需求分析、调度决策、最终交付', 'emoji': '🏛️'},
-    'guihua':   {'label': '规划官', 'role': '规划师',     'duty': '需求拆解、生成TASK.md',          'emoji': '📜'},
-    'shenyi':   {'label': '审议官', 'role': '审议官',     'duty': '独立审查、准奏或封驳',            'emoji': '🔍'},
-    'paifa':    {'label': '派发官', 'role': '派发官',     'duty': '任务路由、派发到执行部门',        'emoji': '📮'},
-    'wenan':    {'label': '文案部', 'role': '文案策划',   'duty': '网站文案、品牌故事、SEO、翻译',   'emoji': '📝'},
-    'daima':    {'label': '代码部', 'role': '代码开发',   'duty': '前端开发、功能实现、性能优化',    'emoji': '⚔️'},
-    'sheji':    {'label': '设计部', 'role': '视觉设计',   'duty': '视觉规范、UI设计、生图',          'emoji': '🎨'},
-    'shencha':  {'label': '审查官', 'role': '质量审查',   'duty': '独立质量验收、对照标准评分',      'emoji': '⚖️'},
-    'huizong':  {'label': '汇总官', 'role': '项目汇总',   'duty': '整合交付、生成交付报告',          'emoji': '📋'},
+    'guihua':   {'label': '筹微',   'role': '规划师',     'duty': '需求拆解、生成TASK.md',          'emoji': '📜'},
+    'shenyi':   {'label': '审微',   'role': '审议官',     'duty': '独立审查、准奏或封驳',            'emoji': '🔍'},
+    'paifa':    {'label': '驿使',   'role': '派发官',     'duty': '任务路由、派发到执行部门',        'emoji': '📮'},
+    'wenan':    {'label': '墨卿',   'role': '文案策划',   'duty': '网站文案、品牌故事、SEO、翻译',   'emoji': '📝'},
+    'daima':    {'label': '锋铸',   'role': '代码开发',   'duty': '前端开发、功能实现、性能优化',    'emoji': '⚔️'},
+    'sheji':    {'label': '绘象',   'role': '视觉设计',   'duty': '视觉规范、UI设计、生图',          'emoji': '🎨'},
+    'shencha':  {'label': '镜衡',   'role': '质量审查',   'duty': '独立质量验收、对照标准评分',      'emoji': '⚖️'},
+    'huizong':  {'label': '归藏',   'role': '项目汇总',   'duty': '整合交付、生成交付报告',          'emoji': '📋'},
 }
 
 KNOWN_MODELS = [

@@ -37,14 +37,14 @@
 
 | Agent | 角色 | 职责 |
 |-------|------|------|
-| `guihua` | 规划官 | 需求分析 → 拆解任务 → 生成 TASK.md |
-| `shenyi` | 审议官 | 独立审查 TASK.md → 准奏或封驳 |
-| `paifa` | 派发官 | 路由子任务到执行部门 |
-| `wenan` | 文案部 | 网站文案/品牌故事/SEO/翻译 |
-| `daima` | 代码部 | 前端开发/功能实现/性能优化 |
-| `sheji` | 设计部 | 视觉规范/UI/生图/素材 |
-| `shencha` | 审查官 | 独立质量验收/对照标准评分 |
-| `huizong` | 汇总官 | 整合交付/生成交付报告 |
+| `guihua` | 筹微 | 需求分析 → 拆解任务 → 生成 TASK.md |
+| `shenyi` | 审微 | 独立审查 TASK.md → 准奏或封驳 |
+| `paifa` | 驿使 | 路由子任务到执行部门 |
+| `wenan` | 墨卿 | 网站文案/品牌故事/SEO/翻译 |
+| `daima` | 锋铸 | 前端开发/功能实现/性能优化 |
+| `sheji` | 绘象 | 视觉规范/UI/生图/素材 |
+| `shencha` | 镜衡 | 独立质量验收/对照标准评分 |
+| `huizong` | 归藏 | 整合交付/生成交付报告 |
 
 ## 🚀 安装
 
@@ -105,6 +105,25 @@ cd baocheng-pm
 ./install.sh
 ./start.sh
 ```
+
+## ⚔️ 扩编 — 按需创建新 Agent
+
+当项目需要当前军团没有的角色时：
+
+```bash
+# 一键创建
+chmod +x scripts/add-agent.sh
+./scripts/add-agent.sh shuju "数枢" "数据分析师" "数据采集、清洗、报表生成"
+```
+
+脚本自动完成：
+1. 生成 SOUL.md（智能推荐模型）
+2. 注册到 registry.json
+3. 注册到 OpenClaw
+4. 创建 workspace + 同步 API Key
+5. 更新 sync_agent_config.py
+
+然后 `git add -A && git commit && git push`，任何电脑 clone 后 `./install.sh` 即可同步。
 
 ## 🧬 技术架构
 

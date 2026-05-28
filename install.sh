@@ -45,8 +45,13 @@ check_deps() {
 create_workspaces() {
   info "创建 Agent Workspace..."
 
-  # 我们的 8 个 Agent（规划/审议/派发/文案/代码/设计/审查/汇总）
-  AGENTS=(guihua shenyi paifa wenan daima sheji shencha huizong)
+  # 从 registry.json 动态加载所有 Agent
+  AGENTS=($(python3 -c "
+import json
+reg = json.load(open('$REPO_DIR/registry.json'))
+print(' '.join(a['id'] for a in reg))
+"))
+  info "军团规模: ${#AGENTS[@]} 个 Agent: ${AGENTS[*]}"
 
   for agent in "${AGENTS[@]}"; do
     ws="$OC_HOME/workspace-$agent"
@@ -91,17 +96,14 @@ oc_home = pathlib.Path(os.environ.get('OPENCLAW_HOME', str(pathlib.Path.home() /
 cfg_path = oc_home / 'openclaw.json'
 cfg = json.loads(cfg_path.read_text())
 
-# 我们的 Agent：全部由鲍澄(main)调度，不需要 Agent 间互相 spawn
-AGENTS = [
-    {"id": "guihua",  "label": "规划官", "subagents": {"allowAgents": []}},
-    {"id": "shenyi",  "label": "审议官", "subagents": {"allowAgents": []}},
-    {"id": "paifa",   "label": "派发官", "subagents": {"allowAgents": []}},
-    {"id": "wenan",   "label": "文案部", "subagents": {"allowAgents": []}},
-    {"id": "daima",   "label": "代码部", "subagents": {"allowAgents": []}},
-    {"id": "sheji",   "label": "设计部", "subagents": {"allowAgents": []}},
-    {"id": "shencha", "label": "审查官", "subagents": {"allowAgents": []}},
-    {"id": "huizong", "label": "汇总官", "subagents": {"allowAgents": []}},
-]
+# 从 registry.json 加载 Agent 列表
+repo_dir = os.environ.get('EDICT_HOME', str(pathlib.Path(os.environ.get('HOME', str(pathlib.Path.home())) + '/Projects/baocheng-pm')))
+reg_path = pathlib.Path(repo_dir) / 'registry.json'
+if reg_path.exists():
+    reg = json.loads(reg_path.read_text())
+    AGENTS = [{"id": a["id"], "subagents": {"allowAgents": []}} for a in reg]
+else:
+    AGENTS = []
 
 agents_cfg = cfg.setdefault('agents', {})
 agents_list = agents_cfg.get('list', [])
@@ -160,7 +162,11 @@ init_data() {
 link_resources() {
   info "创建 data/scripts 软链接..."
 
-  AGENTS=(guihua shenyi paifa wenan daima sheji shencha huizong)
+  AGENTS=($(python3 -c "
+import json
+reg = json.load(open('$REPO_DIR/registry.json'))
+print(' '.join(a['id'] for a in reg))
+"))
   LINKED=0
   for agent in "${AGENTS[@]}"; do
     ws="$OC_HOME/workspace-$agent"
@@ -254,7 +260,11 @@ sync_auth() {
     return
   fi
 
-  AGENTS=(guihua shenyi paifa wenan daima sheji shencha huizong)
+  AGENTS=($(python3 -c "
+import json
+reg = json.load(open('$REPO_DIR/registry.json'))
+print(' '.join(a['id'] for a in reg))
+"))
   SYNCED=0
   for agent in "${AGENTS[@]}"; do
     AGENT_DIR="$OC_HOME/agents/$agent/agent"

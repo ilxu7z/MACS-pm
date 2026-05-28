@@ -1,11 +1,12 @@
 # 鲍澄项目管理体系 - agent 配置模板
+# 此文件为参考模板，实际安装时 install.sh 从 registry.json 动态生成
 [
-  {"id": "guihua",  "label": "规划官", "subagents": {"allowAgents": []}},
-  {"id": "shenyi",  "label": "审议官", "subagents": {"allowAgents": []}},
-  {"id": "paifa",   "label": "派发官", "subagents": {"allowAgents": []}},
-  {"id": "wenan",   "label": "文案部", "subagents": {"allowAgents": []}},
-  {"id": "daima",   "label": "代码部", "subagents": {"allowAgents": []}},
-  {"id": "sheji",   "label": "设计部", "subagents": {"allowAgents": []}},
-  {"id": "shencha", "label": "审查官", "subagents": {"allowAgents": []}},
-  {"id": "huizong", "label": "汇总官", "subagents": {"allowAgents": []}}
+  {"id": "guihua",  "name": "筹微"},
+  {"id": "shenyi",  "name": "审微"},
+  {"id": "paifa",   "name": "驿使"},
+  {"id": "wenan",   "name": "墨卿"},
+  {"id": "daima",   "name": "锋铸"},
+  {"id": "sheji",   "name": "绘象"},
+  {"id": "shencha", "name": "镜衡"},
+  {"id": "huizong", "name": "归藏"}
 ]

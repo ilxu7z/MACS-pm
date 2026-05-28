@@ -1,0 +1,18 @@
+# 鲍澄项目管理体系 — Agent 军团注册表
+# 
+# 这是所有 Agent 的唯一信息源（Single Source of Truth）
+# install.sh 和 sync_agent_config.py 都读取此文件
+# 
+# 添加新 Agent：运行 ./scripts/add-agent.sh <id> <name> <role> <duty>
+# 或者手动编辑此文件，然后运行 ./install.sh
+#
+[
+  {"id": "guihua",  "name": "筹微", "role": "规划师",   "duty": "需求拆解、生成TASK.md",           "emoji": "📜"},
+  {"id": "shenyi",  "name": "审微", "role": "审议官",   "duty": "独立审查、准奏或封驳",             "emoji": "🔍"},
+  {"id": "paifa",   "name": "驿使", "role": "派发官",   "duty": "任务路由、派发到执行部门",         "emoji": "📮"},
+  {"id": "wenan",   "name": "墨卿", "role": "文案策划", "duty": "网站文案、品牌故事、SEO、翻译",    "emoji": "📝"},
+  {"id": "daima",   "name": "锋铸", "role": "代码开发", "duty": "前端开发、功能实现、性能优化",     "emoji": "⚔️"},
+  {"id": "sheji",   "name": "绘象", "role": "视觉设计", "duty": "视觉规范、UI设计、生图",           "emoji": "🎨"},
+  {"id": "shencha", "name": "镜衡", "role": "质量审查", "duty": "独立质量验收、对照标准评分",       "emoji": "⚖️"},
+  {"id": "huizong", "name": "归藏", "role": "项目汇总", "duty": "整合交付、生成交付报告",           "emoji": "📋"}
+]
