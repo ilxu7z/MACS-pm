@@ -27,3 +27,4 @@ data/pending_model_changes.json
 # OS
 .DS_Store
 Thumbs.db
+data/sync_status.json.lock

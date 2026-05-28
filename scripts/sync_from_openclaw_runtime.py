@@ -6,6 +6,7 @@ import time
 import datetime
 import traceback
 import logging
+import hashlib
 from file_lock import atomic_json_write, atomic_json_read
 from utils import get_openclaw_home
 
@@ -188,7 +189,7 @@ def build_task(agent_id, session_key, row, now_ms):
         title = f"{title_label}"
     
     return {
-        'id': f"OC-{agent_id}-{str(session_id)[:8]}",
+        'id': f"JJC-AUTO-{agent_id}-{hashlib.md5(session_key.encode()).hexdigest()[:10]}",
         'title': title,
         'official': official,
         'org': org,
@@ -282,17 +283,13 @@ def main():
                 deduped.append(t)
         tasks = deduped
 
-        # ── 过滤掉非 JJC 且非活跃的系统会话，防止看板噪音 ──
+        # ── 过滤掉非活跃的系统会话，防止看板噪音 ──
         # 规则: 仅保留 24小时内更新的活跃会话，且排除 cron/subagent 等纯后台任务
         filtered_tasks = []
         one_day_ago = now_ms - 24 * 3600 * 1000
         for t in tasks:
-            # 始终保留 JJC 任务（如果有的话，虽然这里主要是 OC 任务，但以防万一）
-            if str(t['id']).startswith('JJC'):
-                filtered_tasks.append(t)
-                continue
-            
-            # OC 任务过滤
+            # JJC-AUTO 和 OC 任务按相同规则过滤（保留活跃会话）
+            # JJC- 人工下旨任务始终保留（但 JJC-AUTO 不是人工任务，走过滤）
             updated = t.get('sourceMeta', {}).get('updatedAt', 0)
             title = t.get('title', '')
             
@@ -326,9 +323,18 @@ def main():
                 existing = json.loads(existing_tasks_file.read_text())
                 jjc_existing = [t for t in existing if str(t.get('id', '')).startswith('JJC')]
                 
-                # 去掉 tasks 里已有的 JJC（以防重复），再把旨意放到最前面
-                tasks = [t for t in tasks if not str(t.get('id', '')).startswith('JJC')]
+                # 去掉 tasks 里人工下旨的 JJC 任务（以防重复），但保留 JJC-AUTO 自动发现任务
+                # dashboard 旨意看板只显示 /^JJC-/i 的任务，故自动发现也以 JJC-AUTO 前缀
+                tasks = [t for t in tasks if not (str(t.get('id', '')).startswith('JJC') and not str(t.get('id', '')).startswith('JJC-AUTO'))]
                 tasks = jjc_existing + tasks
+                # 再次去重（jjc_existing 和 tasks 中可能有相同 id 的 JJC-AUTO 任务）
+                seen = set()
+                unique = []
+                for t in tasks:
+                    if t['id'] not in seen:
+                        seen.add(t['id'])
+                        unique.append(t)
+                tasks = unique
             except Exception as e:
                 log.error(f'merge existing JJC tasks failed: {e}')
                 pass
