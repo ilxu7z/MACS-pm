@@ -112,7 +112,7 @@ for ag in AGENTS:
     ag_id = ag['id']
     ws = str(oc_home / f'workspace-{ag_id}')
     if ag_id not in existing_ids:
-        entry = {'id': ag_id, 'workspace': ws, 'label': ag.get('label', ag_id), 'subagents': ag.get('subagents', {'allowAgents': []})}
+        entry = {'id': ag_id, 'workspace': ws, 'subagents': ag.get('subagents', {'allowAgents': []})}
         agents_list.append(entry)
         added += 1
         print(f'  + 已注册: {ag_id} ({ag.get("label", ag_id)})')
