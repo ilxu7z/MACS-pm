@@ -43,11 +43,12 @@ from channels import get_channel, get_channel_info, CHANNELS as NOTIFICATION_CHA
 
 OCLAW_HOME = pathlib.Path.home() / '.openclaw'
 MAX_REQUEST_BODY = 1 * 1024 * 1024  # 1 MB
-ALLOWED_ORIGIN = None  # Set via --cors; None means restrict to localhost
+ALLOWED_ORIGIN = '*'  # Allow LAN access
 _DASHBOARD_PORT = 7891  # Updated at startup from --port arg
 _DEFAULT_ORIGINS = {
     'http://127.0.0.1:7891', 'http://localhost:7891',
     'http://127.0.0.1:5173', 'http://localhost:5173',  # Vite dev server
+    'http://192.168.3.180:7891',  # LAN
 }
 _SAFE_NAME_RE = re.compile(r'^[a-zA-Z0-9_\-\u4e00-\u9fff]+$')
 
@@ -2895,7 +2896,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     parser = argparse.ArgumentParser(description='三省六部看板服务器')
     parser.add_argument('--port', type=int, default=7891)
-    parser.add_argument('--host', default='127.0.0.1')
+    parser.add_argument('--host', default='0.0.0.0')
     parser.add_argument('--cors', default=None, help='Allowed CORS origin (default: reflect request Origin header)')
     args = parser.parse_args()
 
