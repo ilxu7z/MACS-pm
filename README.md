@@ -50,7 +50,7 @@
 
 ```bash
 # 1. 克隆
-git clone https://github.com/YOUR_USER/baocheng-pm.git
+git clone https://github.com/ilxu7z/baocheng-pm.git
 cd baocheng-pm
 
 # 2. 安装
@@ -100,7 +100,7 @@ open http://127.0.0.1:7891
 ## 🔄 换电脑/重装
 
 ```bash
-git clone https://github.com/YOUR_USER/baocheng-pm.git
+git clone https://github.com/ilxu7z/baocheng-pm.git
 cd baocheng-pm
 ./install.sh
 ./start.sh
