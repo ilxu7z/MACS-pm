@@ -38,6 +38,47 @@ done
 [ ! -f "$REPO_DIR/data/tasks_source.json" ] && echo '[]' > "$REPO_DIR/data/tasks_source.json"
 [ ! -f "$REPO_DIR/data/tasks.json" ] && echo '[]' > "$REPO_DIR/data/tasks.json"
 
+# ── 自动注册 Agent（每启动时检查，缺失即补） ──
+ensure_agents_registered() {
+  "$PYTHON_BIN" -c '
+import json, pathlib
+
+oc_home = pathlib.Path.home() / ".openclaw"
+cfg_path = oc_home / "openclaw.json"
+cfg = json.loads(cfg_path.read_text())
+
+reg_path = pathlib.Path("'"$REPO_DIR"'") / "registry.json"
+reg = json.loads(reg_path.read_text())
+
+agents_cfg = cfg.setdefault("agents", {})
+agents_list = agents_cfg.get("list", [])
+existing_ids = {a["id"] for a in agents_list}
+
+added = 0
+for ag in reg:
+    ag_id = ag["id"]
+    ws = str(oc_home / f"workspace-{ag_id}")
+    if ag_id not in existing_ids:
+        agents_list.append({
+            "default": False,
+            "id": ag_id,
+            "name": ag.get("name", ag_id),
+            "identity": {"emoji": ag.get("emoji", "🤖"), "name": ag.get("name", ag_id)},
+            "workspace": ws
+        })
+        added += 1
+
+if added:
+    agents_cfg["list"] = agents_list
+    cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2))
+    print(f"✅ 已注册 {added} 个新 Agent 到 OpenClaw")
+else:
+    print("✅ 所有 Agent 已注册，跳过")
+' 2>&1
+}
+
+ensure_agents_registered
+
 # ── 优雅退出 ──
 cleanup() {
   echo ""
