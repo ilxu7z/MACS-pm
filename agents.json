@@ -1,0 +1,11 @@
+# 鲍澄项目管理体系 - agent 配置模板
+[
+  {"id": "guihua",  "label": "规划官", "subagents": {"allowAgents": []}},
+  {"id": "shenyi",  "label": "审议官", "subagents": {"allowAgents": []}},
+  {"id": "paifa",   "label": "派发官", "subagents": {"allowAgents": []}},
+  {"id": "wenan",   "label": "文案部", "subagents": {"allowAgents": []}},
+  {"id": "daima",   "label": "代码部", "subagents": {"allowAgents": []}},
+  {"id": "sheji",   "label": "设计部", "subagents": {"allowAgents": []}},
+  {"id": "shencha", "label": "审查官", "subagents": {"allowAgents": []}},
+  {"id": "huizong", "label": "汇总官", "subagents": {"allowAgents": []}}
+]

@@ -1,0 +1,29 @@
+# Git
+.git/
+node_modules/
+dist/
+*.pyc
+__pycache__/
+*.log
+/tmp/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Data (generated at runtime)
+data/tasks_source.json
+data/tasks.json
+data/live_status.json
+data/agent_config.json
+data/officials.json
+data/officials_stats.json
+data/model_change_log.json
+data/sync_status.json
+data/pending_model_changes.json
+
+# OS
+.DS_Store
+Thumbs.db
