@@ -2839,14 +2839,15 @@ class Handler(BaseHTTPRequestHandler):
         elif p == '/api/set-dispatch-channel':
             channel = body.get('channel', '').strip()
             allowed = {'feishu', 'telegram', 'wecom', 'signal', 'tui', 'discord', 'slack'}
-            if not channel or channel not in allowed:
-                self.send_json({'ok': False, 'error': f'channel must be one of: {", ".join(sorted(allowed))}'}, 400)
+            if channel and channel not in allowed:
+                self.send_json({'ok': False, 'error': f'channel must be one of: {", ".join(sorted(allowed))} (or empty to disable)'}, 400)
                 return
             def _set_channel(cfg):
                 cfg['dispatchChannel'] = channel
                 return cfg
             atomic_json_update(DATA / 'agent_config.json', _set_channel, {})
-            self.send_json({'ok': True, 'message': f'派发渠道已切换为 {channel}'})
+            label = f'派发渠道已切换为 {channel}' if channel else '派发渠道已关闭'
+            self.send_json({'ok': True, 'message': label})
 
         # ── 朝堂议政 POST ──
         elif p == '/api/court-discuss/start':
