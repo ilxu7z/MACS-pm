@@ -34,6 +34,7 @@ from ..services.event_bus import (
     TOPIC_TASK_ESCALATED,
 )
 from ..services.task_service import TaskService
+from ..services.session_checker import check_session_approval
 
 log = logging.getLogger("edict.orchestrator")
 
@@ -48,6 +49,24 @@ STALL_RETRY_BACKOFF = [30, 60, 120]  # 重试退避时间（秒）
 # 停滞检测配置
 STALL_CHECK_INTERVAL_SEC = 60   # 检查间隔（秒）
 STALL_THRESHOLD_SEC = 600       # 超过 10 分钟无心跳视为停滞
+
+# 自动验收检查（Plan A: Dashboard 轮询 Session）
+REVIEW_CHECK_INTERVAL_SEC = 30   # 检查间隔（秒）
+REVIEW_MIN_WAIT_SEC = 60         # 至少等 60 秒再检查（给用户审阅时间）
+REVIEW_MAX_AGE_MINUTES = 30      # 只检查最近 30 分钟内的会话
+REVIEW_MAX_ATTEMPTS = 20         # 最多检查 20 次（10 分钟），超时停止
+
+# 审查状态 → 自动推进目标
+_REVIEW_APPROVE_TO = {
+    "Menxia": TaskState.Assigned,   # 门下准奏 → 派发尚书省
+    "Review": TaskState.Done,       # 尚书准奏 → 完成
+}
+
+# 审查状态 → 对应 Agent（用于查 Session）
+_REVIEW_AGENT = {
+    "Menxia": "menxia",
+    "Review": "shangshu",
+}
 
 # 升级路径: 卡在某部门时向上级升级
 _ESCALATION_PATH = {
@@ -74,6 +93,9 @@ class OrchestratorWorker:
         self.bus = EventBus()
         self._running = False
         self._stall_checker_task: asyncio.Task | None = None
+        self._review_checker_task: asyncio.Task | None = None
+        # 审查状态追踪: {task_id: {"entered_at": datetime, "agent": str, "state": str, "attempts": int}}
+        self._review_tracker: dict[str, dict] = {}
 
     async def start(self):
         """启动 worker 主循环。"""
@@ -91,6 +113,8 @@ class OrchestratorWorker:
 
         # 启动停滞检测后台任务
         self._stall_checker_task = asyncio.create_task(self._stall_check_loop())
+        # 启动自动验收检查后台任务
+        self._review_checker_task = asyncio.create_task(self._review_check_loop())
 
         while self._running:
             try:
@@ -103,6 +127,8 @@ class OrchestratorWorker:
         self._running = False
         if self._stall_checker_task:
             self._stall_checker_task.cancel()
+        if self._review_checker_task:
+            self._review_checker_task.cancel()
         await self.bus.close()
         log.info("Orchestrator worker stopped")
 
@@ -192,6 +218,19 @@ class OrchestratorWorker:
         except ValueError:
             log.warning(f"Unknown state: {new_state_str}")
             return
+
+        # 追踪审查状态任务（用于后续自动验收检查）
+        if new_state_str in _REVIEW_AGENT and task_id:
+            self._review_tracker[task_id] = {
+                "entered_at": datetime.now(timezone.utc),
+                "agent": _REVIEW_AGENT[new_state_str],
+                "state": new_state_str,
+                "attempts": 0,
+            }
+            log.info(f"🔍 Registered review task {task_id} in state {new_state_str} for auto-approval check")
+        elif task_id and task_id in self._review_tracker:
+            # 任务已离开审查状态，移除追踪
+            del self._review_tracker[task_id]
 
         # 如果新状态有对应 agent，自动派发
         agent = STATE_AGENT_MAP.get(new_state)
@@ -341,6 +380,105 @@ class OrchestratorWorker:
             except Exception as e:
                 log.error(f"Stall check error: {e}", exc_info=True)
                 await asyncio.sleep(STALL_CHECK_INTERVAL_SEC)
+
+    # ── 自动验收检查（Plan A: Dashboard 轮询 Session）──
+
+    async def _review_check_loop(self):
+        """定时检查 Menxia/Review 状态任务是否已在会话中验收。"""
+        while self._running:
+            try:
+                await asyncio.sleep(REVIEW_CHECK_INTERVAL_SEC)
+                await self._check_review_approval()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                log.error(f"Review check error: {e}", exc_info=True)
+                await asyncio.sleep(REVIEW_CHECK_INTERVAL_SEC)
+
+    async def _check_review_approval(self):
+        """检查跟踪中的审查任务，看用户是否已在会话中验收。"""
+        if not self._review_tracker:
+            return
+
+        settings = get_settings()
+        now = datetime.now(timezone.utc)
+        to_approve: list[tuple[str, str, str, str]] = []  # [(task_id, new_state, agent, reason)]
+        to_remove: list[str] = []
+
+        for task_id, info in list(self._review_tracker.items()):
+            elapsed = (now - info["entered_at"]).total_seconds()
+
+            # 还没到最小等待时间，跳过
+            if elapsed < REVIEW_MIN_WAIT_SEC:
+                continue
+
+            # 超过最大检查次数，放弃
+            info["attempts"] += 1
+            if info["attempts"] > REVIEW_MAX_ATTEMPTS:
+                log.info(f"⏰ Review check timeout for task {task_id} after {info['attempts']} attempts")
+                to_remove.append(task_id)
+                continue
+
+            state = info["state"]
+            new_state = _REVIEW_APPROVE_TO.get(state)
+            if not new_state:
+                to_remove.append(task_id)
+                continue
+
+            # 轮询 OpenClaw Session
+            approved, reason = await check_session_approval(
+                agent_id=info["agent"],
+                task_id=task_id,
+                min_wait_seconds=REVIEW_MIN_WAIT_SEC,
+                max_age_minutes=REVIEW_MAX_AGE_MINUTES,
+                openclaw_bin=settings.openclaw_bin,
+            )
+
+            if approved:
+                to_approve.append((task_id, new_state.value, info["agent"], reason or "用户在会话中已验收"))
+                to_remove.append(task_id)
+            elif reason in ("user_rejected", "user_conditional"):
+                # 用户说了「不行/重做」或「可以但是…」→ 停止自动验收，等人工操作
+                label = "rejected" if reason == "user_rejected" else "gave conditional approval"
+                log.info(f"🚫 Stopping auto-approval for task {task_id}: user {label} in chat")
+                to_remove.append(task_id)
+            elif reason == "too_early":
+                # 用户刚发了消息但还在审阅中，再等等
+                info["attempts"] -= 1  # 不算有效尝试
+
+        # 清理
+        for task_id in to_remove:
+            self._review_tracker.pop(task_id, None)
+
+        # 执行自动推进
+        for task_id, new_state, agent, reason in to_approve:
+            await self._auto_approve_task(task_id, new_state, agent, reason)
+
+    async def _auto_approve_task(self, task_id: str, new_state: str, agent: str, reason: str):
+        """自动推进任务到下一个状态（准奏）。"""
+        import uuid as _uuid
+        try:
+            task_uuid = _uuid.UUID(task_id)
+        except (ValueError, AttributeError):
+            log.warning(f"Invalid task UUID: {task_id}")
+            return
+
+        try:
+            async with async_session() as session:
+                svc = TaskService(session)
+                task = await svc.transition_state(
+                    task_id=task_uuid,
+                    new_state=TaskState(new_state),
+                    agent=f"auto-review:{agent}",
+                    reason=f"🤖 自动准奏: {reason}",
+                )
+                log.info(f"✅ Auto-approved task {task_id}: {task.state.value} → {new_state} ({reason})")
+        except ValueError as e:
+            log.warning(f"Auto-approve transition failed for task {task_id}: {e}")
+        except Exception as e:
+            log.error(f"Auto-approve error for task {task_id}: {e}", exc_info=True)
+
+    # ── 停滞任务检测 ──
 
     async def _check_stalled(self):
         """扫描数据库中 Doing/Next 状态超过阈值未更新的任务。"""
