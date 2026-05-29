@@ -46,6 +46,7 @@ OPENCLAW_CFG = OPENCLAW_HOME / 'openclaw.json'
 
 # Anthropic 定价（每1M token，美元）
 MODEL_PRICING = {
+    # USD 定价
     'anthropic/claude-sonnet-4-6':  {'in':3.0, 'out':15.0, 'cr':0.30, 'cw':3.75},
     'anthropic/claude-opus-4-5':    {'in':15.0,'out':75.0, 'cr':1.50, 'cw':18.75},
     'anthropic/claude-haiku-3-5':   {'in':0.8, 'out':4.0,  'cr':0.08, 'cw':1.0},
@@ -53,6 +54,9 @@ MODEL_PRICING = {
     'openai/gpt-4o-mini':           {'in':0.15,'out':0.6,  'cr':0.075,'cw':0},
     'google/gemini-2.0-flash':      {'in':0.075,'out':0.3, 'cr':0,    'cw':0},
     'google/gemini-2.5-pro':        {'in':1.25,'out':10.0, 'cr':0,    'cw':0},
+    # RMB 定价（deepseek 缓存命中/未命中分开计费）
+    'deepseek/deepseek-v4-flash':   {'in':1.0, 'out':2.0, 'cr':0.02, 'cw':0, 'currency':'cny'},
+    'deepseek/deepseek-v4-pro':     {'in':3.0, 'out':6.0, 'cr':0.025,'cw':0, 'currency':'cny'},
 }
 
 OFFICIALS = [
@@ -161,10 +165,18 @@ def scan_agent(agent_id):
     }
 
 def calc_cost(s, model):
+    """计算成本，返回 (cost_cny, cost_usd)。
+    DeepSeek 使用国内定价（缓存命中/未命中分开），直接返回人民币。
+    """
     p = MODEL_PRICING.get(model, MODEL_PRICING['anthropic/claude-sonnet-4-6'])
+    if p.get('currency') == 'cny':
+        # DeepSeek: tokens_in 已经是 OpenClaw 归一化后的计费输入
+        # cache_read 是会话级累计，不适合拆分计费，按全量输入计
+        cny = (s['tokens_in']/1e6 * p['in'] + s['tokens_out']/1e6 * p['out'])
+        return round(cny, 2), round(cny / 7.25, 4)
     usd = (s['tokens_in']/1e6*p['in'] + s['tokens_out']/1e6*p['out']
          + s['cache_read']/1e6*p['cr'] + s['cache_write']/1e6*p['cw'])
-    return round(usd, 4)
+    return round(usd * 7.25, 2), round(usd, 4)
 
 def get_task_stats(org_label, tasks, alt_org=None):
     """计算该官员的任务统计。
@@ -241,7 +253,7 @@ def main():
         alt_org = alt_org_map.get(off['id'])
         ts      = get_task_stats(off['label'], tasks, alt_org)
         hb      = get_hb(off['id'], live_tasks)
-        cost_usd = calc_cost(ss, model)
+        cost_cny, cost_usd = calc_cost(ss, model)
 
         result.append({
             **off,
@@ -255,7 +267,7 @@ def main():
             'tokens_total': ss['tokens_in'] + ss['tokens_out'],
             'messages': ss['messages'],
             'cost_usd': cost_usd,
-            'cost_cny': round(cost_usd * 7.25, 2),
+            'cost_cny': cost_cny,
             'last_active': ss['last_active'],
             'heartbeat': hb,
             'tasks_done': ts['tasks_done'],
