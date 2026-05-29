@@ -2247,6 +2247,100 @@ _STATE_LABELS = {
 }
 
 
+# ── 共享知识底座 ────────────────────────────────────────────
+SHARED_KNOWLEDGE_DIR = OCLAW_HOME / 'workspace-main' / 'shared-knowledge'
+
+# 任务类型 → 共享知识关键词映射（用于匹配 relevant knowledge）
+_KNOWLEDGE_KEYWORDS = {
+    '生图': ['图', 'image', 'gemini', '提示词', 'prompt', 'zonal', '视觉', '设计', 'display', '海报', '画册', 'photo', 'render'],
+    '翻译': ['翻译', 'i18n', '多语言', '文案', 'locale', '语种', 'copywriting', 'localization'],
+    '前端': ['css', 'html', '样式', '布局', '组件', '前端', 'frontend', 'UI', 'responsive', 'tailwind', '页面'],
+    '代码': ['代码', '开发', '重构', 'bug', '修复', '函数', 'api', '接口', 'coding', 'refactor', '脚本'],
+    '审查': ['审查', 'review', '质量', '测试', '验收', 'lint', '检查', '审议'],
+    '部署': ['部署', 'deploy', 'ci', 'cd', '服务器', '运维', 'server', 'docker', '上线'],
+}
+
+
+def _build_knowledge_context(task_title='', task_org='', task_project=''):
+    """从 shared-knowledge/ 中提取与当前任务相关的经验，返回注入文本。"""
+    idx_path = SHARED_KNOWLEDGE_DIR / 'INDEX.md'
+    if not idx_path.exists():
+        return ''
+    try:
+        idx_text = idx_path.read_text(encoding='utf-8')
+    except Exception:
+        return ''
+
+    # 确定任务类型
+    task_type = None
+    combined = f'{task_title} {task_org} {task_project}'.lower()
+    for ttype, keywords in _KNOWLEDGE_KEYWORDS.items():
+        if any(kw in combined for kw in keywords):
+            task_type = ttype
+            break
+
+    # 收集相关条目
+    relevant = []
+    for cat_dir, cat_label in [('lessons', '踩过的坑'), ('methods', '方法论'), ('preferences', '老板偏好')]:
+        cat_path = SHARED_KNOWLEDGE_DIR / cat_dir
+        if not cat_path.is_dir():
+            continue
+        for entry_file in sorted(cat_path.glob('*.md')):
+            try:
+                # 读标题和首段
+                lines = entry_file.read_text(encoding='utf-8').splitlines()
+                title = ''
+                summary = ''
+                in_summary = False
+                for line in lines:
+                    stripped = line.strip()
+                    if stripped.startswith('# ') and not title:
+                        title = stripped[2:].strip()
+                    elif stripped and not stripped.startswith('#') and not stripped.startswith('>'):
+                        if not summary:
+                            summary = stripped[:120]
+                        break
+                # 关键词匹配
+                entry_text = f'{title} {summary}'.lower()
+                if task_type:
+                    keywords = _KNOWLEDGE_KEYWORDS.get(task_type, [])
+                    if any(kw in entry_text for kw in keywords):
+                        relevant.append((cat_label, title, summary[:100]))
+            except Exception:
+                continue
+
+    # 如果无匹配，注入通用反模式提醒
+    if not relevant:
+        # 检查是否有通用编码反模式（对所有任务适用）
+        ant_pattern = SHARED_KNOWLEDGE_DIR / 'lessons' / '2026-05-21-llm-coding-anti-patterns.md'
+        if ant_pattern.exists():
+            relevant.append(('踩过的坑', 'LLM编码反模式', '静默假设/过度工程/链式幻觉/盲目重试/投机代码'))
+
+    if not relevant:
+        return ''
+
+    lines = ['', '📚 **共享知识（前人经验，请务必注意）**']
+    for cat, title, summary in relevant[:3]:  # 最多 3 条
+        lines.append(f'  • [{cat}] {title}')
+        if summary:
+            lines.append(f'    {summary}')
+
+    return '\n'.join(lines)
+
+
+def _build_post_done_review_prompt(task_title='', task_org=''):
+    """生成任务完成后的经验回顾提示。"""
+    return (
+        f'\n\n🧠 **任务完成 — 请执行进化回顾**\n'
+        f'回顾刚才的工作，用 kanban_update.py 写入经验：\n'
+        f'  1. 踩了坑？→ python3 scripts/kanban_update.py memory <agent_id> lesson "坑描述"\n'
+        f'  2. 发现了高效方法？→ python3 scripts/kanban_update.py memory <agent_id> method "方法描述"\n'
+        f'  3. 有关键决策需要传给下一个任务？→ python3 scripts/kanban_update.py task-memo <task_id> <agent_id> "决策1,决策2"\n'
+        f'  4. 规则需要全员遵守？→ python3 scripts/kanban_update.py shared-memo "规则内容" <agent_id>\n'
+        f'（可跳过：如果这次任务没有值得记录的经验）'
+    )
+
+
 def dispatch_for_state(task_id, task, new_state, trigger='state-transition'):
     """推进/审批后自动派发对应 Agent（后台异步，不阻塞响应）。"""
     agent_id = _STATE_AGENT_MAP.get(new_state)
@@ -2308,6 +2402,19 @@ def dispatch_for_state(task_id, task, new_state, trigger='state-transition'):
         f'旨意: {title}\n'
         f'⚠️ 看板已有此任务，请勿重复创建。直接用 kanban_update.py 更新状态。'
     ))
+
+    # 🔥 注入共享知识
+    knowledge = _build_knowledge_context(
+        task_title=title,
+        task_org=task.get('org', ''),
+        task_project=task.get('project', ''),
+    )
+    if knowledge:
+        msg += '\n' + knowledge
+
+    # 六部执行 Agent 追加: 任务完成后写经验
+    if agent_id in ('libu', 'hubu', 'bingbu', 'xingbu', 'gongbu', 'libu_hr'):
+        msg += _build_post_done_review_prompt(title, task.get('org', ''))
 
     # 角色 ID → 实际 Agent ID 翻译（三省六部 → OpenClaw）
     real_agent_id = _role_to_agent(agent_id)

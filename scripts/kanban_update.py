@@ -484,6 +484,13 @@ def cmd_done(task_id, output_path='', summary=''):
         return
     log.info(f'✅ {task_id} 执行完成，已提交尚书省审查')
     _append_audit(task_id, _infer_agent_id_from_runtime(), 'done', None, 'Review', summary or '')
+    # 🔥 进化引导：提示 Agent 回顾经验
+    agent_id = _infer_agent_id_from_runtime()
+    print(f'\n🧠 [进化] 任务完成 — 如有值得记录的经验，请执行：', flush=True)
+    print(f'  python3 scripts/kanban_update.py memory {agent_id} lesson "踩坑描述"', flush=True)
+    print(f'  python3 scripts/kanban_update.py memory {agent_id} method "高效方法"', flush=True)
+    print(f'  python3 scripts/kanban_update.py task-memo {task_id} {agent_id} "关键决策1,决策2"', flush=True)
+    print(f'  （无值得记录的经验可跳过）', flush=True)
 
 
 def cmd_block(task_id, reason):

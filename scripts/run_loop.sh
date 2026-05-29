@@ -76,6 +76,7 @@ while true; do
   safe_run "$SCRIPT_DIR/sync_agent_config.py"
   safe_run "$SCRIPT_DIR/apply_model_changes.py"
   safe_run "$SCRIPT_DIR/sync_officials_stats.py"
+  safe_run "$SCRIPT_DIR/knowledge_bridge.py" sync
   safe_run "$SCRIPT_DIR/refresh_live_data.py"
 
   # 定期巡检：检测卡住的任务并自动重试
