@@ -53,16 +53,57 @@ const COMMUNITY_SOURCES = [
   },
 ];
 
+// ── 帮助函数 ──
+
+/** 给 emoji 上色用的色盘 */
+const EMOJI_BG: Record<string, string> = {
+  '🧠': '#0d1f45', '🤖': '#3d1111', '🕴️': '#0a3322',
+  '🏛️': '#0d1f45', '📜': '#3d2a0a', '🔍': '#0a2a3d',
+  '📮': '#2a1a3d', '📝': '#2a3d1a', '⚔️': '#3d1a1a',
+  '🎨': '#1a2a3d', '⚖️': '#1a3d2a', '📋': '#2a2a1a',
+};
+
+function agentAccent(emoji = '🧠'): string {
+  return EMOJI_BG[emoji] || '#1a1a2e';
+}
+
+type SkillItem = {
+  name: string;
+  title?: string;
+  path?: string;
+  exists?: boolean;
+  description?: string;
+  isGlobal?: boolean;
+  enabled?: boolean;
+};
+
+type AgentInfo = {
+  id: string;
+  label: string;
+  emoji: string;
+  skills?: SkillItem[];
+};
+
+type GlobalSkillInfo = {
+  name: string;
+  description: string;
+  path: string;
+  isGlobal: boolean;
+};
+
 export default function SkillsConfig() {
   const agentConfig = useStore((s) => s.agentConfig);
   const loadAgentConfig = useStore((s) => s.loadAgentConfig);
   const toast = useStore((s) => s.toast);
 
-  // 本地技能状态
+  // 技能查看弹窗
   const [skillModal, setSkillModal] = useState<{ agentId: string; name: string; content: string; path: string } | null>(null);
+  // 添加私有技能弹窗
   const [addForm, setAddForm] = useState<{ agentId: string; agentLabel: string } | null>(null);
   const [formData, setFormData] = useState({ name: '', desc: '', trigger: '' });
   const [submitting, setSubmitting] = useState(false);
+  // Toggle 状态
+  const [toggling, setToggling] = useState<string | null>(null);
 
   // 主 Tab 切换
   const [activeTab, setActiveTab] = useState<'local' | 'remote'>('local');
@@ -111,6 +152,23 @@ export default function SkillsConfig() {
     }
   };
 
+  const toggleSkill = async (agentId: string, skillName: string, enabled: boolean) => {
+    const key = `${agentId}/${skillName}`;
+    setToggling(key);
+    try {
+      const r = await api.toggleGlobalSkill(agentId, skillName, enabled);
+      if (r.ok) {
+        toast(`✅ ${enabled ? '启用' : '禁用'} ${skillName}`, 'ok');
+        loadAgentConfig();
+      } else {
+        toast(r.error || '操作失败', 'err');
+      }
+    } catch {
+      toast('服务器连接失败', 'err');
+    }
+    setToggling(null);
+  };
+
   const openAddForm = (agentId: string, agentLabel: string) => {
     setAddForm({ agentId, agentLabel });
     setFormData({ name: '', desc: '', trigger: '' });
@@ -123,7 +181,7 @@ export default function SkillsConfig() {
     try {
       const r = await api.addSkill(addForm.agentId, formData.name, formData.desc, formData.trigger);
       if (r.ok) {
-        toast(`✅ 技能 ${formData.name} 已添加到 ${addForm.agentLabel}`, 'ok');
+        toast(`✅ 私有技能 ${formData.name} 已添加到 ${addForm.agentLabel}`, 'ok');
         setAddForm(null);
         loadAgentConfig();
       } else {
@@ -212,43 +270,163 @@ export default function SkillsConfig() {
     return <div className="empty">无法加载</div>;
   }
 
-  // ── 本地技能面板 ──
+  // ── 全局技能池统计 ──
+  const globalPool: GlobalSkillInfo[] = agentConfig.globalSkillsPool || [];
+  const totalGlobal = globalPool.length;
+
+  // ── 本地技能面板（全局池 + 私有技能）──
   const localPanel = (
     <div>
-      <div className="skills-grid">
-        {agentConfig.agents.map((ag) => (
-          <div className="sk-card" key={ag.id}>
-            <div className="sk-hdr">
-              <span className="sk-emoji">{ag.emoji || '🏛️'}</span>
-              <span className="sk-name">{ag.label}</span>
-              <span className="sk-cnt">{(ag.skills || []).length} 技能</span>
-            </div>
-            <div className="sk-list">
-              {!(ag.skills || []).length ? (
-                <div className="sk-empty">暂无 Skills</div>
-              ) : (
-                (ag.skills || []).map((sk) => (
-                  <div className="sk-item" key={sk.name} onClick={() => openSkill(ag.id, sk.name)}>
-                    <span className="si-name">📦 {sk.name}</span>
-                    <span className="si-desc">{sk.description || '无描述'}</span>
-                    <span className="si-arrow">›</span>
-                  </div>
-                ))
-              )}
-            </div>
-            <div className="sk-add" onClick={() => openAddForm(ag.id, ag.label)}>
-              ＋ 添加技能
-            </div>
+      {/* 全局技能池总览 */}
+      {globalPool.length > 0 && (
+        <div style={{ marginBottom: 20 }}>
+          <div style={{
+            fontSize: 12, fontWeight: 700, color: 'var(--muted)',
+            letterSpacing: '.06em', marginBottom: 12,
+            display: 'flex', alignItems: 'center', gap: 8,
+          }}>
+            🏛️ 全局技能池
+            <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 999, background: '#0d1f45', color: 'var(--acc)' }}>
+              {totalGlobal} 个
+            </span>
+            <span style={{ fontSize: 10, color: 'var(--muted)', fontWeight: 400, marginLeft: 4 }}>
+              — 所有 Agent 共享，在下面各 Agent 卡中开启/关闭
+            </span>
           </div>
-        ))}
+
+          {/* 全局技能预览条 */}
+          <div style={{
+            display: 'flex', flexWrap: 'wrap', gap: 4,
+            background: 'var(--panel)', borderRadius: 12, border: '1px solid var(--line)',
+            padding: '10px 14px',
+          }}>
+            {globalPool.map((sk) => (
+              <span key={sk.name} style={{
+                fontSize: 10, padding: '2px 8px', borderRadius: 999,
+                background: '#0a1a2e', color: '#7ab7ff',
+              }}>
+                📦 {sk.name}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Agent 卡片 — 每个 Agent 显示其技能列表 */}
+      <div className="skills-grid">
+        {agentConfig.agents.map((ag) => {
+          const skills = (ag.skills || []) as SkillItem[];
+          const globalSkills = skills.filter((s) => s.isGlobal);
+          const customSkills = skills.filter((s) => !s.isGlobal);
+          const enabledCount = globalSkills.filter((s) => s.enabled).length;
+
+          return (
+            <div className="sk-card" key={ag.id}>
+              {/* Agent 头部 */}
+              <div className="sk-hdr">
+                <span className="sk-emoji">{ag.emoji || '🏛️'}</span>
+                <span className="sk-name">{ag.label}</span>
+                <span className="sk-cnt">
+                  {enabledCount}/{totalGlobal} 启用
+                  {customSkills.length > 0 && ` · +${customSkills.length} 私有`}
+                </span>
+              </div>
+
+              {/* 全局技能列表 */}
+              <div className="sk-list">
+                <div style={{
+                  fontSize: 10, fontWeight: 600, color: 'var(--muted)',
+                  letterSpacing: '.04em', padding: '6px 10px 4px',
+                }}>
+                  全局技能
+                </div>
+                {globalSkills.length === 0 ? (
+                  <div className="sk-empty">加载中…</div>
+                ) : (
+                  globalSkills.map((sk) => {
+                    const key = `${ag.id}/${sk.name}`;
+                    const isToggling = toggling === key;
+                    return (
+                      <div
+                        className={`sk-item ${sk.enabled ? 'sk-item-on' : ''}`}
+                        key={sk.name}
+                        style={{ opacity: sk.enabled ? 1 : 0.5 }}
+                      >
+                        {/* 点击标题查看详情 */}
+                        <span
+                          className="si-name"
+                          onClick={() => openSkill(ag.id, sk.name)}
+                          style={{ cursor: 'pointer', flex: 1 }}
+                        >
+                          📦 {sk.name}
+                        </span>
+                        <span className="si-desc">{sk.description || ''}</span>
+                        {/* Toggle 开关 */}
+                        <button
+                          onClick={() => toggleSkill(ag.id, sk.name, !sk.enabled)}
+                          disabled={isToggling}
+                          style={{
+                            flexShrink: 0, width: 36, height: 20, borderRadius: 999, border: 'none',
+                            cursor: 'pointer', position: 'relative', transition: 'all .2s',
+                            background: sk.enabled ? '#4caf88' : '#3a3a4a',
+                            padding: 0,
+                          }}
+                          title={sk.enabled ? '点击禁用' : '点击启用'}
+                        >
+                          <span style={{
+                            position: 'absolute', top: 2, width: 16, height: 16, borderRadius: '50%',
+                            background: '#fff', transition: 'all .2s',
+                            left: sk.enabled ? 18 : 2,
+                            opacity: isToggling ? 0.4 : 1,
+                          }} />
+                        </button>
+                      </div>
+                    );
+                  })
+                )}
+
+                {/* 私有技能列表 */}
+                {customSkills.length > 0 && (
+                  <>
+                    <div style={{
+                      fontSize: 10, fontWeight: 600, color: 'var(--acc)',
+                      letterSpacing: '.04em', padding: '10px 10px 4px',
+                      borderTop: '1px solid var(--line)',
+                      marginTop: 4,
+                    }}>
+                      🔧 私有技能
+                    </div>
+                    {customSkills.map((sk) => (
+                      <div className="sk-item" key={sk.name}>
+                        <span
+                          className="si-name"
+                          onClick={() => openSkill(ag.id, sk.name)}
+                          style={{ cursor: 'pointer' }}
+                        >
+                          🔧 {sk.name}
+                        </span>
+                        <span className="si-desc">{sk.description || ''}</span>
+                        <span className="si-arrow">›</span>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
+
+              {/* 添加私有技能按钮 */}
+              <div className="sk-add" onClick={() => openAddForm(ag.id, ag.label)}>
+                ＋ 添加私有技能
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
 
-  // ── 远程技能面板 ──
+  // ── 远程技能面板（不变）──
   const remotePanel = (
     <div>
-      {/* 操作栏 */}
       <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
         <button
           style={{ padding: '8px 18px', background: 'var(--acc)', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}
@@ -267,7 +445,6 @@ export default function SkillsConfig() {
         </span>
       </div>
 
-      {/* 社区快选区 */}
       <div style={{ marginBottom: 24 }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--muted)', letterSpacing: '.06em', marginBottom: 10 }}>
           🌐 社区技能源 — 一键导入
@@ -344,7 +521,6 @@ export default function SkillsConfig() {
         )}
       </div>
 
-      {/* 已添加的远程技能列表 */}
       {remoteLoading ? (
         <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--muted)', fontSize: 13 }}>⟳ 加载中…</div>
       ) : remoteSkills.length === 0 ? (
@@ -426,7 +602,15 @@ export default function SkillsConfig() {
       {/* 主 Tab 切换 */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid var(--line)', paddingBottom: 0 }}>
         {[
-          { key: 'local', label: '🏛️ 本地技能', count: agentConfig.agents.reduce((n, a) => n + (a.skills?.length || 0), 0) },
+          {
+            key: 'local',
+            label: '🏛️ 本地技能',
+            count: agentConfig.agents.reduce(
+              (n, a) => n + ((a.skills || []) as SkillItem[]).filter((s) => !s.isGlobal).length,
+              0
+            ),
+            sub: `池:${totalGlobal}`,
+          },
           { key: 'remote', label: '🌐 远程技能', count: remoteSkills.length },
         ].map((t) => (
           <div
@@ -444,6 +628,11 @@ export default function SkillsConfig() {
             }}
           >
             {t.label}
+            {t.sub && (
+              <span style={{ marginLeft: 6, fontSize: 10, color: '#7ab7ff' }}>
+                {t.sub}
+              </span>
+            )}
             {t.count > 0 && (
               <span style={{ marginLeft: 6, fontSize: 10, padding: '1px 6px', borderRadius: 999, background: '#1a2040', color: 'var(--acc)' }}>
                 {t.count}
@@ -487,9 +676,9 @@ export default function SkillsConfig() {
             <button className="modal-close" onClick={() => setAddForm(null)}>✕</button>
             <div className="modal-body">
               <div style={{ fontSize: 11, color: 'var(--acc)', fontWeight: 700, letterSpacing: '.04em', marginBottom: 4 }}>
-                为 {addForm.agentLabel} 添加技能
+                为 {addForm.agentLabel} 添加私有技能
               </div>
-              <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 18 }}>＋ 新增 Skill</div>
+              <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 18 }}>⚙️ 新增私有 Skill</div>
 
               <div
                 style={{
@@ -503,13 +692,11 @@ export default function SkillsConfig() {
                   color: 'var(--muted)',
                 }}
               >
-                <b style={{ color: 'var(--text)' }}>📋 Skill 规范说明</b>
+                <b style={{ color: 'var(--text)' }}>📋 私有技能 vs 全局技能</b>
                 <br />
-                • 技能名称使用<b style={{ color: 'var(--text)' }}>小写英文 + 连字符</b>
+                全局技能（如 brainstorm, TDD）已自动共享给所有 Agent，直接在卡片里开关即可。
                 <br />
-                • 创建后会生成模板文件 SKILL.md
-                <br />
-                • 技能会在 agent 收到相关任务时<b style={{ color: 'var(--text)' }}>自动激活</b>
+                如果某个 Agent 需要<b style={{ color: 'var(--text)' }}>仅此一家</b>的独特技能，在这里创建。
               </div>
 
               <form onSubmit={submitAdd} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -557,7 +744,7 @@ export default function SkillsConfig() {
                     disabled={submitting}
                     style={{ padding: '8px 20px', fontSize: 13, background: 'var(--acc)', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 600 }}
                   >
-                    {submitting ? '⟳ 创建中…' : '📦 创建技能'}
+                    {submitting ? '⟳ 创建中…' : '⚙️ 创建私有技能'}
                   </button>
                 </div>
               </form>

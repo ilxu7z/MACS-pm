@@ -10,6 +10,37 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(message
 BASE = pathlib.Path(os.environ.get('EDICT_HOME', '')) if os.environ.get('EDICT_HOME') else pathlib.Path(__file__).resolve().parent.parent
 DATA = BASE / 'data'
 OPENCLAW_HOME = get_openclaw_home()
+
+# Registry: 三省六部角色 ↔ 实际 Agent 映射
+_REGISTRY_PATH = BASE / 'registry.json'
+_registry_cache = None
+_registry_cache_mtime = 0
+def _load_registry():
+    global _registry_cache, _registry_cache_mtime
+    p = _REGISTRY_PATH
+    try:
+        mtime = p.stat().st_mtime_ns
+        if _registry_cache is not None and mtime == _registry_cache_mtime:
+            return _registry_cache
+        raw = json.loads(p.read_text())
+        if not isinstance(raw, list):
+            raw = []
+        _registry_cache = raw
+        _registry_cache_mtime = mtime
+    except Exception:
+        if _registry_cache is None:
+            _registry_cache = []
+    return _registry_cache
+
+def _role_to_agent(role_id):
+    """三省六部角色 ID → 实际 OpenClaw Agent ID"""
+    for entry in _load_registry():
+        if isinstance(entry, dict) and entry.get('courtId') == role_id:
+            return entry['id']
+    # 特殊兼容：太子用 main
+    if role_id == 'taizi':
+        return 'main'
+    return role_id
 AGENTS_ROOT = OPENCLAW_HOME / 'agents'
 OPENCLAW_CFG = OPENCLAW_HOME / 'openclaw.json'
 
@@ -65,21 +96,22 @@ def normalize_model(model_value, fallback='anthropic/claude-sonnet-4-6'):
 def get_model(agent_id):
     cfg = _load_openclaw_cfg()
     default = normalize_model(cfg.get('agents',{}).get('defaults',{}).get('model',{}), 'anthropic/claude-sonnet-4-6')
+    # 翻译三省六部角色 ID 为实际 Agent ID
+    real_id = _role_to_agent(agent_id)
     for a in cfg.get('agents',{}).get('list',[]):
-        if a.get('id') == agent_id:
+        if a.get('id') == real_id:
             return normalize_model(a.get('model', default), default)
-    # 兼容历史：太子曾使用 main 作为运行时 id
-    if agent_id == 'taizi':
-        for a in cfg.get('agents',{}).get('list',[]):
-            if a.get('id') == 'main':
-                return normalize_model(a.get('model', default), default)
     return default
 
 def scan_agent(agent_id):
-    """从 sessions.json 读取 token 统计（累计所有 session）"""
+    """从 sessions.json 读取 token 统计（累计所有 session）
+    自动将三省六部角色 ID 翻译为实际 Agent ID。
+    """
+    real_id = _role_to_agent(agent_id)
+    if real_id != agent_id:
+        log.info(f'scan_agent: {agent_id} → {real_id}')
+        agent_id = real_id
     sj = AGENTS_ROOT / agent_id / 'sessions' / 'sessions.json'
-    if not sj.exists() and agent_id == 'taizi':
-        sj = AGENTS_ROOT / 'main' / 'sessions' / 'sessions.json'
     if not sj.exists():
         return {'tokens_in':0,'tokens_out':0,'cache_read':0,'cache_write':0,'sessions':0,'last_active':None,'messages':0}
     
@@ -134,26 +166,57 @@ def calc_cost(s, model):
          + s['cache_read']/1e6*p['cr'] + s['cache_write']/1e6*p['cw'])
     return round(usd, 4)
 
-def get_task_stats(org_label, tasks):
-    done   = [t for t in tasks if t.get('state')=='Done' and t.get('org')==org_label]
-    active = [t for t in tasks if t.get('state') in ('Doing','Review','Assigned') and t.get('org')==org_label]
+def get_task_stats(org_label, tasks, alt_org=None):
+    """计算该官员的任务统计。
+    alt_org 是备选 org 匹配模式（如 '三省-审微'），因为实际任务 org 不一定是官制名。
+    """
+    def _org_match(t):
+        o = t.get('org', '')
+        if o == org_label:
+            return True
+        if alt_org and o == alt_org:
+            return True
+        return False
+    done   = [t for t in tasks if t.get('state')=='Done' and _org_match(t)]
+    active = [t for t in tasks if t.get('state') in ('Doing','Review','Assigned') and _org_match(t)]
+    # flow_log 匹配：也用备选 org
     fl = sum(1 for t in tasks for f in t.get('flow_log',[])
-             if f.get('from')==org_label or f.get('to')==org_label)
+             if f.get('from') in (org_label, alt_org) or f.get('to') in (org_label, alt_org))
     # 参与的旨意（JJC）列表
     participated = []
+    matched_ids = set()
     for t in tasks:
-        if not t['id'].startswith('JJC'): continue
+        if not str(t.get('id','')).startswith('JJC'): continue
         for f in t.get('flow_log',[]):
-            if f.get('from')==org_label or f.get('to')==org_label:
-                if t['id'] not in [x['id'] for x in participated]:
-                    participated.append({'id':t['id'],'title':t.get('title',''),'state':t.get('state','')})
+            if f.get('from') in (org_label, alt_org) or f.get('to') in (org_label, alt_org):
+                tid = t['id']
+                if tid not in matched_ids:
+                    matched_ids.add(tid)
+                    participated.append({'id':tid,'title':t.get('title',''),'state':t.get('state','')})
                 break
+    if not participated:
+        # 兜底：如果 org/flow_log 都没匹配到，用 agentId 匹配（来自 sourceMeta）
+        agent_id = _role_to_agent(org_label)
+        for t in tasks:
+            if str(t.get('id','')).startswith('JJC'):
+                sid = t.get('sourceMeta',{}).get('agentId','')
+                if sid and sid == agent_id:
+                    tid = t['id']
+                    if tid not in matched_ids:
+                        matched_ids.add(tid)
+                        participated.append({'id':tid,'title':t.get('title',''),'state':t.get('state','')})
+        if participated:
+            done   = [t for t in tasks if t.get('state')=='Done' and t.get('sourceMeta',{}).get('agentId')==agent_id]
+            active = [t for t in tasks if t.get('state') in ('Doing','Review','Assigned') and t.get('sourceMeta',{}).get('agentId')==agent_id]
+            fl = sum(1 for t in tasks if t.get('sourceMeta',{}).get('agentId')==agent_id)
     return {'tasks_done':len(done),'tasks_active':len(active),
             'flow_participations':fl,'participated_edicts':participated}
 
 def get_hb(agent_id, live_tasks):
+    real_id = _role_to_agent(agent_id)
     for t in live_tasks:
-        if t.get('sourceMeta',{}).get('agentId')==agent_id and t.get('heartbeat'):
+        ta = t.get('sourceMeta',{}).get('agentId','')
+        if ta == real_id and t.get('heartbeat'):
             return t['heartbeat']
     return {'status':'idle','label':'⚪ 待命','ageSec':None}
 
@@ -162,11 +225,21 @@ def main():
     live  = rj(DATA/'live_status.json', {})
     live_tasks = live.get('tasks', [])
 
+    # 构建 officials 的 alt_org 映射：角色 ID → '三省-{name}'
+    registry = _load_registry()
+    alt_org_map = {}
+    for entry in registry:
+        if isinstance(entry, dict) and entry.get('name'):
+            cid = entry.get('courtId', '')
+            if cid:
+                alt_org_map[cid] = f"三省-{entry['name']}"
+
     result = []
     for off in OFFICIALS:
         model   = get_model(off['id'])
         ss      = scan_agent(off['id'])
-        ts      = get_task_stats(off['label'], tasks)
+        alt_org = alt_org_map.get(off['id'])
+        ts      = get_task_stats(off['label'], tasks, alt_org)
         hb      = get_hb(off['id'], live_tasks)
         cost_usd = calc_cost(ss, model)
 

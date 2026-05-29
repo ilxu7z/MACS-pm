@@ -1139,46 +1139,72 @@ function renderAgentsStatus(data){
   if(!data||!data.ok) return;
   const gw = data.gateway||{};
   const agents = data.agents||[];
-  // 跳过 main（和 taizi 重复）
-  const filtered = agents.filter(a=>a.id!=='main');
-  const running = filtered.filter(a=>a.status==='running').length;
-  const idle = filtered.filter(a=>a.status==='idle').length;
-  const offline = filtered.filter(a=>a.status==='offline').length;
-  const unconf = filtered.filter(a=>a.status==='unconfigured').length;
+  const courtCoverage = data.courtCoverage||[];
   const gwCls = gw.probe?'ok':gw.alive?'warn':'err';
 
-  document.getElementById('agent-status-panel').innerHTML=`
+  // --- 面板 1：运行时 Agent 状态（真实 Agent） ---
+  const running = agents.filter(a=>a.status==='running').length;
+  const idle = agents.filter(a=>a.status==='idle').length;
+  const offline = agents.filter(a=>a.status==='offline').length;
+  const unconf = agents.filter(a=>a.status==='unconfigured').length;
+
+  document.getElementById('agent-status-panel').innerHTML=\`
     <div class="as-panel">
       <div class="as-header">
-        <span class="as-title">🔌 Agent 在线状态</span>
-        <span class="as-gw ${gwCls}">Gateway: ${esc(gw.status||'未知')}</span>
+        <span class="as-title">🔌 运行时 Agent 状态</span>
+        <span class="as-gw \${gwCls}">Gateway: \${esc(gw.status||'未知')}</span>
         <button class="as-refresh" onclick="loadAgentsStatus()" title="刷新状态">🔄 刷新</button>
-        ${offline+unconf>0?`<button class="as-wake-all" onclick="wakeAllAgents()" title="唤醒所有离线Agent">⚡ 全部唤醒</button>`:''}
+        \${offline+unconf>0?\`<button class="as-wake-all" onclick="wakeAllAgents()" title="唤醒所有离线Agent">⚡ 全部唤醒</button>\`:''}
       </div>
       <div class="as-grid">
-        ${filtered.map(a=>{
+        \${agents.map(a=>{
           const dotCls = a.status;
           const canWake = a.status!=='running' && a.status!=='unconfigured' && gw.alive;
-          return `<div class="as-card" title="${esc(a.role)} · ${esc(a.statusLabel)}">
-            <div class="as-dot ${dotCls}"></div>
-            <div class="as-emoji">${a.emoji}</div>
-            <div class="as-label">${esc(a.label)}</div>
-            <div class="as-role">${esc(a.role)}</div>
-            <div class="as-status">${esc(a.statusLabel)}</div>
-            ${a.lastActive?`<div class="as-time">⏰ ${esc(a.lastActive)}</div>`:'<div class="as-time">无活动记录</div>'}
-            ${canWake?`<button class="as-wake-btn" onclick="event.stopPropagation();wakeAgent('${a.id}',this)">⚡ 唤醒</button>`:''}
-          </div>`;
+          const roleSuffix = a.courtTitle ? (' · ' + a.courtTitle) : '';
+          return \`<div class="as-card" title="\${esc(a.role)}\${esc(roleSuffix)} · \${esc(a.statusLabel)}">
+            <div class="as-dot \${dotCls}"></div>
+            <div class="as-emoji">\${a.emoji}</div>
+            <div class="as-label">\${esc(a.label)}</div>
+            <div class="as-role">\${esc(a.role)}\${roleSuffix ? \`<span style="font-size:9px;color:var(--muted)"> \${esc(roleSuffix)}</span>\` : ''}</div>
+            <div class="as-status">\${esc(a.statusLabel)}</div>
+            \${a.lastActive?\`<div class="as-time">⏰ \${esc(a.lastActive)}</div>\`:'<div class="as-time">无活动记录</div>'}
+            \${canWake?\`<button class="as-wake-btn" onclick="event.stopPropagation();wakeAgent('\${a.id}',this)">⚡ 唤醒</button>\`:''}
+          </div>\`;
         }).join('')}
       </div>
       <div class="as-summary">
-        <span><span class="as-dot running" style="position:static;width:8px;height:8px"></span> ${running} 运行中</span>
-        <span><span class="as-dot idle" style="position:static;width:8px;height:8px"></span> ${idle} 待命</span>
-        ${offline?`<span><span class="as-dot offline" style="position:static;width:8px;height:8px"></span> ${offline} 离线</span>`:''}
-        ${unconf?`<span><span class="as-dot unconfigured" style="position:static;width:8px;height:8px"></span> ${unconf} 未配置</span>`:''}
-        <span style="margin-left:auto;font-size:10px;color:var(--muted)">检测于 ${(data.checkedAt||'').substring(11,19)}</span>
+        <span><span class="as-dot running" style="position:static;width:8px;height:8px"></span> \${running} 运行中</span>
+        <span><span class="as-dot idle" style="position:static;width:8px;height:8px"></span> \${idle} 待命</span>
+        \${offline?\`<span><span class="as-dot offline" style="position:static;width:8px;height:8px"></span> \${offline} 离线</span>\`:''}
+        \${unconf?\`<span><span class="as-dot unconfigured" style="position:static;width:8px;height:8px"></span> \${unconf} 未配置</span>\`:''}
+        <span style="margin-left:auto;font-size:10px;color:var(--muted)">检测于 \${(data.checkedAt||'').substring(11,19)}</span>
       </div>
-    </div>`;
+    </div>
+    <!-- 面板 2：三省六部覆盖 -->
+    <div class="as-panel">
+      <div class="as-header">
+        <span class="as-title" style="font-size:12px">🏛️ 三省六部 · 官制覆盖</span>
+        <span style="font-size:10px;color:var(--muted)">\${courtCoverage.filter(c=>c.covered==='covered').length}/\${courtCoverage.length} 部已配置</span>
+      </div>
+      <div class="as-grid">
+        \${courtCoverage.map(c=>{
+          const covCls = c.covered==='covered' ? 'running' : 'unconfigured';
+          const agentLabel = c.agentName ? \`\${c.agentName}(\${c.agentId})\` : '（未配置）';
+          const statLabel = c.covered==='covered' ?
+            (c.agentStatus==='running'?'🟢 在线':c.agentStatus==='idle'?'⚪ 待命':'🔴 离线') :
+            '❌ 未配置';
+          return \`<div class="as-card" title="\${c.label} → \${agentLabel}">
+            <div class="as-dot \${covCls}" style="\${c.covered==='covered'?'box-shadow:0 0 6px #2ecc8a88':''}"></div>
+            <div class="as-emoji">\${c.emoji}</div>
+            <div class="as-label" style="font-size:11px">\${esc(c.label)}</div>
+            <div class="as-role" style="font-size:9px">\${esc(agentLabel)}</div>
+            <div class="as-status" style="font-size:9px">\${statLabel}</div>
+          </div>\`;
+        }).join('')}
+      </div>
+    </div>\`;
 }
+
 
 async function wakeAgent(agentId, btn){
   if(btn){ btn.disabled=true; btn.textContent='⏳ 唤醒中...'; }
@@ -1196,7 +1222,7 @@ async function wakeAgent(agentId, btn){
 async function wakeAllAgents(){
   if(!_agentsStatusData) return;
   const toWake = (_agentsStatusData.agents||[]).filter(a=>
-    a.id!=='main' && a.status!=='running' && a.status!=='unconfigured'
+    a.status!=='running' && a.status!=='unconfigured'
   );
   if(!toWake.length){ toast('所有 Agent 均已在线','ok'); return; }
   toast(`正在唤醒 ${toWake.length} 个 Agent...`,'ok',5000);
@@ -1223,6 +1249,11 @@ function renderMonitor(tasks){
     {id:'zaochao', label:'钦天监',emoji:'📰',role:'朝报官',  rank:'正三品'},
   ];
 
+  // 加载 agent-status 数据中的官制覆盖信息
+  const courtCoverage = (_agentsStatusData && _agentsStatusData.courtCoverage) || [];
+  const courtMap = {};
+  courtCoverage.forEach(c => courtMap[c.id] = c);
+
   // 每个部门当前承接的旨意：从 JJC 任务里找 org 匹配且非 Done 的
   const activeTasks = tasks.filter(t => isEdict(t) && t.state !== 'Done' && t.state !== 'Next');
   // 官员统计数据（如已加载）
@@ -1233,6 +1264,11 @@ function renderMonitor(tasks){
 
   let activeCount = 0;
   const cards = DEPTS.map(d => {
+    const court = courtMap[d.id];
+    const agentName = court ? court.agentName || '' : '';
+    const agentStatus = court ? court.agentStatus : 'unconfigured';
+    const covered = court ? court.covered === 'covered' : false;
+
     // 该部门正在处理的旨意
     const myTasks = activeTasks.filter(t => t.org === d.label);
     // 也从 flow_log 中找最近参与的旨意
@@ -1254,7 +1290,7 @@ function renderMonitor(tasks){
         <span class="dc-emoji">${d.emoji}</span>
         <div class="dc-info">
           <div class="dc-name">${d.label}</div>
-          <div class="dc-role">${d.role} · ${d.rank}</div>
+          <div class="dc-role">${d.role} · ${d.rank}${covered?` <span style="color:var(--ok);font-size:10px">→ ${esc(agentName)}</span>`:' <span style="color:var(--danger);font-size:9px">未配置</span>'}</div>
         </div>
         <div class="dc-status">
           <span class="dc-dot ${dotCls}"></span>
@@ -1278,7 +1314,7 @@ function renderMonitor(tasks){
           </div>`}
       </div>
       <div class="dc-footer">
-        <span class="dc-model">🤖 ${esc(off.model_short||'待配置')}</span>
+        <span class="dc-model">🤖 ${agentName ? esc(agentName) : esc(off.model_short||'待配置')}</span>
         ${off.last_active?`<span class="dc-la">⏰ ${esc(off.last_active)}</span>`:''}
       </div>
     </div>`;
@@ -1288,7 +1324,6 @@ function renderMonitor(tasks){
   document.getElementById('duty-grid').innerHTML = cards.join('');
 }
 
-/* ══ TASK DETAIL MODAL ══ */
 function openTask(id){
   if(!liveStatus||!liveStatus.tasks)return;
   const t = liveStatus.tasks.find(x=>x.id===id);

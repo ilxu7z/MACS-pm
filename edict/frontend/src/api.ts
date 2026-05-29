@@ -78,6 +78,8 @@ export const api = {
     postJ<ActionResult>(`${API_BASE}/api/morning-brief/refresh`, {}),
   saveMorningConfig: (config: SubConfig) =>
     postJ<ActionResult>(`${API_BASE}/api/morning-config`, config),
+  toggleGlobalSkill: (agentId: string, skillName: string, enabled: boolean) =>
+    postJ<ActionResult>(`${API_BASE}/api/toggle-global-skill`, { agentId, skillName, enabled }),
   addSkill: (agentId: string, skillName: string, description: string, trigger: string) =>
     postJ<ActionResult>(`${API_BASE}/api/add-skill`, { agentId, skillName, description, trigger }),
 
@@ -181,6 +183,9 @@ export interface SkillInfo {
   name: string;
   description: string;
   path: string;
+  exists?: boolean;
+  isGlobal?: boolean;
+  enabled?: boolean;
 }
 
 export interface KnownModel {
@@ -193,6 +198,7 @@ export interface AgentConfig {
   agents: AgentInfo[];
   knownModels?: KnownModel[];
   dispatchChannel?: string;
+  globalSkillsPool?: SkillInfo[];
 }
 
 export interface ChangeLogEntry {
@@ -240,9 +246,28 @@ export interface AgentStatusInfo {
   label: string;
   emoji: string;
   role: string;
+  duty?: string;
   status: 'running' | 'idle' | 'offline' | 'unconfigured';
   statusLabel: string;
   lastActive?: string;
+  lastActiveTs?: number;
+  sessions?: number;
+  hasWorkspace?: boolean;
+  processAlive?: boolean;
+  courtId?: string;
+  courtTitle?: string;
+}
+
+export interface CourtCoverageInfo {
+  id: string;
+  label: string;
+  emoji: string;
+  role: string;
+  rank: string;
+  covered: 'covered' | 'uncovered';
+  agentId?: string;
+  agentName?: string;
+  agentStatus?: string;
 }
 
 export interface GatewayStatus {
@@ -255,6 +280,7 @@ export interface AgentsStatusData {
   ok: boolean;
   gateway: GatewayStatus;
   agents: AgentStatusInfo[];
+  courtCoverage?: CourtCoverageInfo[];
   checkedAt: string;
 }
 

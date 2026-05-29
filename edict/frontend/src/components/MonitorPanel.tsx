@@ -35,7 +35,7 @@ export default function MonitorPanel() {
   const handleWakeAll = async () => {
     if (!agentsStatusData) return;
     const toWake = agentsStatusData.agents.filter(
-      (a) => a.id !== 'main' && a.status !== 'running' && a.status !== 'unconfigured'
+      (a) => a.status !== 'running' && a.status !== 'unconfigured'
     );
     if (!toWake.length) { toast('所有 Agent 均已在线'); return; }
     toast(`正在唤醒 ${toWake.length} 个 Agent...`);
@@ -48,21 +48,22 @@ export default function MonitorPanel() {
 
   // Agent Status Panel
   const asData = agentsStatusData;
-  const filtered = asData?.agents?.filter((a) => a.id !== 'main') || [];
-  const running = filtered.filter((a) => a.status === 'running').length;
-  const idle = filtered.filter((a) => a.status === 'idle').length;
-  const offline = filtered.filter((a) => a.status === 'offline').length;
-  const unconf = filtered.filter((a) => a.status === 'unconfigured').length;
+  const agents = asData?.agents || [];
+  const courtCoverage = asData?.courtCoverage || [];
+  const running = agents.filter((a) => a.status === 'running').length;
+  const idle = agents.filter((a) => a.status === 'idle').length;
+  const offline = agents.filter((a) => a.status === 'offline').length;
+  const unconf = agents.filter((a) => a.status === 'unconfigured').length;
   const gw = asData?.gateway;
   const gwCls = gw?.probe ? 'ok' : gw?.alive ? 'warn' : 'err';
 
   return (
     <div>
-      {/* Agent Status Panel */}
+      {/* Agent Status Panel — 运行时 Agent */}
       {asData && asData.ok && (
         <div className="as-panel">
           <div className="as-header">
-            <span className="as-title">🔌 Agent 在线状态</span>
+            <span className="as-title">🔌 运行时 Agent 状态</span>
             <span className={`as-gw ${gwCls}`}>Gateway: {gw?.status || '未知'}</span>
             <button className="btn-refresh" onClick={() => loadAgentsStatus()} style={{ marginLeft: 8 }}>
               🔄 刷新
@@ -74,14 +75,17 @@ export default function MonitorPanel() {
             )}
           </div>
           <div className="as-grid">
-            {filtered.map((a) => {
+            {agents.map((a) => {
               const canWake = a.status !== 'running' && a.status !== 'unconfigured' && gw?.alive;
+              const roleSuffix = a.courtTitle ? ` · ${a.courtTitle}` : '';
               return (
-                <div key={a.id} className="as-card" title={`${a.role} · ${a.statusLabel}`}>
+                <div key={a.id} className="as-card" title={`${a.role}${roleSuffix} · ${a.statusLabel}`}>
                   <div className={`as-dot ${a.status}`} />
                   <div style={{ fontSize: 22 }}>{a.emoji}</div>
                   <div style={{ fontSize: 12, fontWeight: 700 }}>{a.label}</div>
-                  <div style={{ fontSize: 10, color: 'var(--muted)' }}>{a.role}</div>
+                  <div style={{ fontSize: 10, color: 'var(--muted)' }}>
+                    {a.role}{roleSuffix ? <span style={{ fontSize: 9, color: 'var(--muted)' }}>{roleSuffix}</span> : ''}
+                  </div>
                   <div style={{ fontSize: 10, color: 'var(--muted)' }}>{a.statusLabel}</div>
                   {a.lastActive ? (
                     <div style={{ fontSize: 10, color: 'var(--muted)' }}>⏰ {a.lastActive}</div>
@@ -109,9 +113,44 @@ export default function MonitorPanel() {
         </div>
       )}
 
+      {/* 官制覆盖面板 */}
+      {courtCoverage.length > 0 && (
+        <div className="as-panel">
+          <div className="as-header">
+            <span className="as-title" style={{ fontSize: 13 }}>🏛️ 三省六部 · 官制覆盖</span>
+            <span style={{ fontSize: 10, color: 'var(--muted)' }}>
+              {courtCoverage.filter(c => c.covered === 'covered').length}/{courtCoverage.length} 部已配置
+            </span>
+          </div>
+          <div className="as-grid">
+            {courtCoverage.map((c) => {
+              const covCls = c.covered === 'covered' ? 'running' : 'unconfigured';
+              const agentLabel = c.agentName ? `${c.agentName}(${c.agentId})` : '（未配置）';
+              const statLabel = c.covered === 'covered'
+                ? (c.agentStatus === 'running' ? '🟢 在线' : c.agentStatus === 'idle' ? '⚪ 待命' : '🔴 离线')
+                : '❌ 未配置';
+              return (
+                <div key={c.id} className="as-card" title={`${c.label} → ${agentLabel}`}>
+                  <div className={`as-dot ${covCls}`} style={c.covered === 'covered' ? { boxShadow: '0 0 6px #2ecc8a88' } : {}} />
+                  <div style={{ fontSize: 22 }}>{c.emoji}</div>
+                  <div style={{ fontSize: 11, fontWeight: 700 }}>{c.label}</div>
+                  <div style={{ fontSize: 9, color: 'var(--muted)' }}>{agentLabel}</div>
+                  <div style={{ fontSize: 9, color: 'var(--muted)' }}>{statLabel}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Duty Grid */}
       <div className="duty-grid">
         {DEPTS.map((d) => {
+          // 从 courtCoverage 获取关联 Agent
+          const court = courtCoverage.find(c => c.id === d.id);
+          const agentName = court?.agentName || '';
+          const covered = court?.covered === 'covered';
+
           const myTasks = activeTasks.filter((t) => t.org === d.label);
           const isActive = myTasks.some((t) => t.state === 'Doing');
           const isBlocked = myTasks.some((t) => t.state === 'Blocked');
@@ -127,7 +166,12 @@ export default function MonitorPanel() {
                 <span className="dc-emoji">{d.emoji}</span>
                 <div className="dc-info">
                   <div className="dc-name">{d.label}</div>
-                  <div className="dc-role">{d.role} · {d.rank}</div>
+                  <div className="dc-role">
+                    {d.role} · {d.rank}
+                    {covered
+                      ? <span style={{ color: 'var(--ok)', fontSize: 10 }}> → {agentName}</span>
+                      : <span style={{ color: 'var(--danger)', fontSize: 9 }}> 未配置</span>}
+                  </div>
                 </div>
                 <div className="dc-status">
                   <span className={`dc-dot ${dotCls}`} />
@@ -159,7 +203,7 @@ export default function MonitorPanel() {
                 )}
               </div>
               <div className="dc-footer">
-                <span className="dc-model">🤖 {off?.model_short || '待配置'}</span>
+                <span className="dc-model">🤖 {agentName || off?.model_short || '待配置'}</span>
                 {off?.last_active && <span className="dc-la">⏰ {off.last_active}</span>}
               </div>
             </div>

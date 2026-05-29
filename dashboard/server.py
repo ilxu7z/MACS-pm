@@ -56,6 +56,7 @@ BASE = pathlib.Path(__file__).parent
 DIST = BASE / 'dist'          # React 构建产物 (npm run build)
 DATA = BASE.parent / "data"
 SCRIPTS = BASE.parent / 'scripts'
+_REGISTRY_PATH = BASE.parent / 'registry.json'
 _ACTIVE_TASK_DATA_DIR = None
 
 # 静态资源 MIME 类型
@@ -311,6 +312,24 @@ def read_skill_content(agent_id, skill_name):
         return {'ok': True, 'name': skill_name, 'agent': agent_id, 'content': content, 'path': str(skill_path)}
     except Exception as e:
         return {'ok': False, 'error': str(e)}
+
+
+def toggle_global_skill(agent_id, skill_name, enabled):
+    """启用/禁用 Agent 的某个全局技能。"""
+    if not _SAFE_NAME_RE.match(agent_id) or not _SAFE_NAME_RE.match(skill_name):
+        return {'ok': False, 'error': '参数含非法字符'}
+    cfg_path = DATA / 'agent_config.json'
+    cfg = read_json(cfg_path, {})
+    for ag in cfg.get('agents', []):
+        if ag.get('id') == agent_id:
+            for s in ag.get('skills', []):
+                if s.get('name') == skill_name and s.get('isGlobal'):
+                    s['enabled'] = enabled
+                    atomic_json_write(cfg_path, cfg)
+                    # 同步到 openclaw workspace
+                    subprocess.run([python_bin(), str(SCRIPTS / 'sync_agent_config.py')], timeout=10)
+                    return {'ok': True, 'message': f'{"启用" if enabled else "禁用"} 全局技能 {skill_name}'}
+    return {'ok': False, 'error': f'全局技能 {skill_name} 不存在于 {agent_id}'}
 
 
 def add_skill_to_agent(agent_id, skill_name, description, trigger=''):
@@ -885,6 +904,57 @@ def _check_agent_workspace(agent_id):
     return ws.is_dir()
 
 
+# -- 三省六部 ↔ 实际 Agent 映射（基于 registry.json） --
+_registry_lock = threading.Lock()
+_registry_cache = None
+_registry_cache_mtime = 0
+
+def _load_registry():
+    """加载 registry.json，缓存 + 自动刷新。"""
+    global _registry_cache, _registry_cache_mtime
+    with _registry_lock:
+        p = _REGISTRY_PATH
+        try:
+            mtime = p.stat().st_mtime_ns
+            if _registry_cache is not None and mtime == _registry_cache_mtime:
+                return _registry_cache
+            raw = json.loads(p.read_text())
+            if not isinstance(raw, list):
+                raw = []
+            _registry_cache = raw
+            _registry_cache_mtime = mtime
+        except Exception:
+            if _registry_cache is None:
+                _registry_cache = []
+        return _registry_cache
+
+
+def _role_to_agent(role_id):
+    """将三省六部角色 ID（taizi/zhongshu/shangshu/libu 等）翻译为实际 OpenClaw Agent ID。
+    未在 registry 中注册的角色返回原 ID 作为 fallback。
+    """
+    registry = _load_registry()
+    for entry in registry:
+        if entry.get('courtId') == role_id:
+            return entry['id']
+    return role_id  # fallback: 保持向后兼容
+
+
+def _scan_actual_agent_ids():
+    """扫描 ~/.openclaw/agents/ 目录，返回所有真实 Agent ID 列表。
+    排除 openmoss-* 等基础设施 Agent。
+    """
+    agents_dir = OCLAW_HOME / 'agents'
+    if not agents_dir.is_dir():
+        return []
+    exclude_prefixes = ('openmoss-',)
+    result = []
+    for d in sorted(agents_dir.iterdir()):
+        if d.is_dir() and not d.name.startswith(exclude_prefixes):
+            result.append(d.name)
+    return result
+
+
 def get_agents_status():
     """获取所有 Agent 的在线状态。
     返回各 Agent 的:
@@ -897,13 +967,18 @@ def get_agents_status():
     gateway_alive = _check_gateway_alive()
     gateway_probe = _check_gateway_probe() if gateway_alive else False
 
+    registry = _load_registry()
+    reg_by_id = {e['id']: e for e in registry if isinstance(e, dict)}
+
+    # 第 1 步：扫描真实 Agent 目录
+    agent_ids = _scan_actual_agent_ids()
+
     agents = []
-    seen_ids = set()
-    for dept in _AGENT_DEPTS:
-        aid = dept['id']
-        if aid in seen_ids:
+    seen_set = set()
+    for aid in agent_ids:
+        if aid in seen_set:
             continue
-        seen_ids.add(aid)
+        seen_set.add(aid)
 
         has_workspace = _check_agent_workspace(aid)
         last_ts, sess_count, is_busy = _get_agent_session_status(aid)
@@ -945,11 +1020,21 @@ def get_agents_status():
             except Exception:
                 pass
 
+        # 从 registry 取元数据
+        reg_entry = reg_by_id.get(aid, {})
+        label = reg_entry.get('name', aid)
+        emoji = reg_entry.get('emoji', '🤖')
+        role_text = reg_entry.get('role', '')
+        duty_text = reg_entry.get('duty', '')
+        court_id = reg_entry.get('courtId', '')
+        court_title = reg_entry.get('courtTitle', '')
+
         agents.append({
             'id': aid,
-            'label': dept['label'],
-            'emoji': dept['emoji'],
-            'role': dept['role'],
+            'label': label,
+            'emoji': emoji,
+            'role': role_text,
+            'duty': duty_text,
             'status': status,
             'statusLabel': status_label,
             'lastActive': last_active_str,
@@ -957,6 +1042,45 @@ def get_agents_status():
             'sessions': sess_count,
             'hasWorkspace': has_workspace,
             'processAlive': process_alive,
+            'courtId': court_id,
+            'courtTitle': court_title,
+        })
+
+    # 第 2 步：构建三省六部覆盖视图
+    # 将 _AGENT_DEPTS 中的角色与 registry 中的实际 Agent 关联
+    dept_role_map = {}  # courtId → role metadata from _AGENT_DEPTS
+    for d in _AGENT_DEPTS:
+        dept_role_map[d['id']] = d
+
+    court_coverage = []
+    for d in _AGENT_DEPTS:
+        court_id = d['id']
+        # 在 registry 中找 courtId 匹配的 Agent
+        matched_entry = None
+        for e in registry:
+            if isinstance(e, dict) and e.get('courtId') == court_id:
+                matched_entry = e
+                break
+
+        # 在 agents 列表中找实际状态（如果已扫描到）
+        matched_agent = None
+        if matched_entry:
+            for a in agents:
+                if a['id'] == matched_entry['id']:
+                    matched_agent = a
+                    break
+
+        covered = 'covered' if (matched_entry and (matched_agent and matched_agent['hasWorkspace'])) else 'uncovered'
+        court_coverage.append({
+            'id': court_id,
+            'label': d['label'],
+            'emoji': d['emoji'],
+            'role': d['role'],
+            'rank': d['rank'],
+            'covered': covered,
+            'agentId': matched_entry['id'] if matched_entry else None,
+            'agentName': matched_entry.get('name', '') if matched_entry else '',
+            'agentStatus': matched_agent['status'] if matched_agent else 'unconfigured',
         })
 
     return {
@@ -967,12 +1091,21 @@ def get_agents_status():
             'status': '🟢 运行中' if gateway_probe else ('🟡 进程在但无响应' if gateway_alive else '🔴 未启动'),
         },
         'agents': agents,
+        'courtCoverage': court_coverage,
         'checkedAt': now_iso(),
     }
 
 
 def wake_agent(agent_id, message=''):
-    """唤醒指定 Agent，发送一条心跳/唤醒消息。"""
+    """唤醒指定 Agent，发送一条心跳/唤醒消息。
+    支持三省六部角色 ID（taizi/zhongshu/shangshu 等），自动翻译为实际 Agent ID。
+    """
+    # 角色 ID → 实际 Agent ID 翻译
+    real_id = _role_to_agent(agent_id)
+    if real_id != agent_id:
+        log.info(f'🔀 角色 ID 翻译: {agent_id} → {real_id}')
+        agent_id = real_id
+
     if not _SAFE_NAME_RE.match(agent_id):
         return {'ok': False, 'error': f'agent_id 非法: {agent_id}'}
     if not _check_agent_workspace(agent_id):
@@ -1190,8 +1323,9 @@ def handle_scheduler_escalate(task_id, reason=''):
     sched = _ensure_scheduler(task)
     current_level = int(sched.get('escalationLevel') or 0)
     next_level = min(current_level + 1, 2)
-    target = 'menxia' if next_level == 1 else 'shangshu'
+    target_role = 'menxia' if next_level == 1 else 'shangshu'
     target_label = '门下省' if next_level == 1 else '尚书省'
+    target_agent = _role_to_agent(target_role)
 
     sched['escalationLevel'] = next_level
     sched['lastEscalatedAt'] = now_iso()
@@ -1207,7 +1341,7 @@ def handle_scheduler_escalate(task_id, reason=''):
         f'原因: {reason or "任务超过阈值未推进"}\n'
         f'⚠️ 看板已有任务，请勿重复创建。'
     )
-    wake_agent(target, msg)
+    wake_agent(target_agent, msg)
 
     return {'ok': True, 'message': f'{task_id} 已升级至{target_label}', 'escalationLevel': next_level}
 
@@ -1310,12 +1444,13 @@ def handle_scheduler_scan(threshold_sec=600):
 
             if level < 2:
                 next_level = level + 1
-                target = 'menxia' if next_level == 1 else 'shangshu'
+                target_role = 'menxia' if next_level == 1 else 'shangshu'
                 target_label = '门下省' if next_level == 1 else '尚书省'
+                target_agent = _role_to_agent(target_role)
                 sched['escalationLevel'] = next_level
                 sched['lastEscalatedAt'] = now_iso()
                 _scheduler_add_flow(task, f'停滞{stalled_sec}秒，升级至{target_label}协调', to=target_label)
-                pending_escalates.append((task_id, state, target, target_label, stalled_sec))
+                pending_escalates.append((task_id, state, target_agent, target_label, stalled_sec))
                 actions.append({'taskId': task_id, 'action': 'escalate', 'to': target_label, 'stalledSec': stalled_sec})
                 changed = True
                 continue
@@ -2174,6 +2309,12 @@ def dispatch_for_state(task_id, task, new_state, trigger='state-transition'):
         f'⚠️ 看板已有此任务，请勿重复创建。直接用 kanban_update.py 更新状态。'
     ))
 
+    # 角色 ID → 实际 Agent ID 翻译（三省六部 → OpenClaw）
+    real_agent_id = _role_to_agent(agent_id)
+    if real_agent_id != agent_id:
+        log.info(f'🔀 dispatch 角色翻译: {agent_id} → {real_agent_id}')
+        agent_id = real_agent_id
+
     def _do_dispatch():
         try:
             # Gateway 可能暂时不可达（休眠恢复、进程重启），等待后重试
@@ -2669,6 +2810,17 @@ class Handler(BaseHTTPRequestHandler):
                     print(f'[refresh error] {e}', file=sys.stderr)
             threading.Thread(target=do_refresh, daemon=True).start()
             self.send_json({'ok': True, 'message': '采集已触发，约30-60秒后刷新'})
+            return
+
+        if p == '/api/toggle-global-skill':
+            agent_id = body.get('agentId', '').strip()
+            skill_name = body.get('skillName', '').strip()
+            enabled = body.get('enabled', False)
+            if not agent_id or not skill_name:
+                self.send_json({'ok': False, 'error': 'agentId and skillName required'}, 400)
+                return
+            result = toggle_global_skill(agent_id, skill_name, enabled)
+            self.send_json(result)
             return
 
         if p == '/api/add-skill':

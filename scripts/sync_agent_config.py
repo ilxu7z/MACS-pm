@@ -54,7 +54,71 @@ def normalize_model(model_value, fallback='unknown'):
     return fallback
 
 
+def _parse_skill_front_matter(md_path: pathlib.Path):
+    """解析 SKILL.md 的 YAML front matter，返回 name 和 description。"""
+    name = md_path.parent.name
+    desc = ''
+    if not md_path.exists():
+        return name, desc
+    try:
+        lines = md_path.read_text(encoding='utf-8', errors='ignore').splitlines()
+        in_front = False
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped == '---':
+                if not in_front:
+                    in_front = True
+                    continue
+                else:
+                    break  # end front matter
+            if in_front:
+                if stripped.startswith('name:'):
+                    v = stripped[len('name:'):].strip().strip("'\"")
+                    if v:
+                        name = v
+                elif stripped.startswith('description:'):
+                    v = stripped[len('description:'):].strip().strip("'\"")
+                    if v:
+                        desc = v
+        if not desc:
+            # 兜底：用第一行非空正文
+            for line in lines:
+                stripped = line.strip()
+                if stripped and not stripped.startswith('#') and not stripped.startswith('---'):
+                    desc = stripped[:100]
+                    break
+    except Exception:
+        pass
+    return name, desc
+
+
+GLOBAL_SKILLS_PATH = OPENCLAW_HOME / 'skills'
+
+
+def _scan_global_skills():
+    """扫描 ~/.openclaw/skills/ 目录，返回所有全局技能列表。"""
+    skills = []
+    try:
+        if GLOBAL_SKILLS_PATH.is_dir():
+            for d in sorted(GLOBAL_SKILLS_PATH.iterdir()):
+                if d.is_dir():
+                    md = d / 'SKILL.md'
+                    sname, sdesc = _parse_skill_front_matter(md)
+                    skills.append({
+                        'name': d.name,
+                        'title': sname,
+                        'path': str(md),
+                        'exists': md.exists(),
+                        'description': sdesc or '(无描述)',
+                        'isGlobal': True,
+                    })
+    except PermissionError:
+        pass
+    return skills
+
+
 def get_skills(workspace: str):
+    """获取 Agent 私有技能（workspace-{agent}/skills/ 目录下）。"""
     skills_dir = pathlib.Path(workspace) / 'skills'
     skills = []
     try:
@@ -62,20 +126,46 @@ def get_skills(workspace: str):
             for d in sorted(skills_dir.iterdir()):
                 if d.is_dir():
                     md = d / 'SKILL.md'
-                    desc = ''
-                    if md.exists():
-                        try:
-                            for line in md.read_text(encoding='utf-8', errors='ignore').splitlines():
-                                line = line.strip()
-                                if line and not line.startswith('#') and not line.startswith('---'):
-                                    desc = line[:100]
-                                    break
-                        except Exception:
-                            desc = '(读取失败)'
-                    skills.append({'name': d.name, 'path': str(md), 'exists': md.exists(), 'description': desc})
+                    sname, sdesc = _parse_skill_front_matter(md)
+                    skills.append({
+                        'name': d.name,
+                        'title': sname,
+                        'path': str(md),
+                        'exists': md.exists(),
+                        'description': sdesc or '(无描述)',
+                        'isGlobal': False,
+                    })
     except PermissionError as e:
         log.warning(f'Skills 目录访问受限: {e}')
     return skills
+
+
+def _merge_skills(global_skills, agent_specific_skills, agent_id):
+    """合并全局技能和 Agent 私有技能。全局技能默认 disabled，可在 dashboard 中启用。"""
+    # 加载已有的 enabled 状态
+    existing_path = DATA / 'agent_config.json'
+    existing_enabled = {}
+    if existing_path.exists():
+        try:
+            existing = json.loads(existing_path.read_text())
+            for a in existing.get('agents', []):
+                if a.get('id') == agent_id:
+                    for s in a.get('skills', []):
+                        if s.get('isGlobal'):
+                            existing_enabled[s['name']] = s.get('enabled', False)
+        except Exception:
+            pass
+
+    merged = []
+    for gs in global_skills:
+        s = dict(gs)
+        s['enabled'] = existing_enabled.get(gs['name'], False)
+        merged.append(s)
+    for cs in agent_specific_skills:
+        s = dict(cs)
+        s['enabled'] = True
+        merged.append(s)
+    return merged
 
 
 def _collect_openclaw_models(cfg):
@@ -129,6 +219,8 @@ def main():
     agents_list = agents_cfg.get('list', [])
     merged_models = _collect_openclaw_models(cfg)
 
+    global_skills = _scan_global_skills()
+
     result = []
     seen_ids = set()
     for ag in agents_list:
@@ -141,13 +233,15 @@ def main():
             allow_agents = ag.get('allowAgents', []) or []
         else:
             allow_agents = ag.get('subagents', {}).get('allowAgents', [])
+        agent_skills = get_skills(workspace)
+        merged = _merge_skills(global_skills, agent_skills, ag_id)
         result.append({
             'id': ag_id,
             'label': meta['label'], 'role': meta['role'], 'duty': meta['duty'], 'emoji': meta['emoji'],
             'model': normalize_model(ag.get('model', default_model), default_model),
             'defaultModel': default_model,
             'workspace': workspace,
-            'skills': get_skills(workspace),
+            'skills': merged,
             'allowAgents': allow_agents,
         })
         seen_ids.add(ag_id)
@@ -161,13 +255,15 @@ def main():
         if ag_id in seen_ids or ag_id not in ID_LABEL:
             continue
         meta = ID_LABEL[ag_id]
+        agent_skills = get_skills(extra['workspace'])
+        merged = _merge_skills(global_skills, agent_skills, ag_id)
         result.append({
             'id': ag_id,
             'label': meta['label'], 'role': meta['role'], 'duty': meta['duty'], 'emoji': meta['emoji'],
             'model': extra['model'],
             'defaultModel': default_model,
             'workspace': extra['workspace'],
-            'skills': get_skills(extra['workspace']),
+            'skills': merged,
             'allowAgents': extra['allowAgents'],
             'isDefaultModel': True,
         })
@@ -187,6 +283,7 @@ def main():
         'knownModels': merged_models,
         'dispatchChannel': existing_cfg.get('dispatchChannel') or os.getenv('DEFAULT_DISPATCH_CHANNEL', ''),
         'agents': result,
+        'globalSkillsPool': global_skills,
     }
     DATA.mkdir(exist_ok=True)
     atomic_json_write(DATA / 'agent_config.json', payload)
